@@ -55,7 +55,8 @@ def test_cli_runs_one_mock_game_from_frozen_dev_manifest(tmp_path, monkeypatch, 
     summary = json.loads((output / "summaries.jsonl").read_text())
     proposal = json.loads((output / "proposals.jsonl").read_text())
     metadata = json.loads((output / "metadata.json").read_text())
-    assert capsys.readouterr().out == "completed 1 game\n"
+    output_text = capsys.readouterr().out
+    assert "Starting new run." in output_text and "Run complete." in output_text
     assert summary["solved"] and summary["game_id"] == "dynamic_dev_0000"
     assert proposal["prompt_version"] == "prompt-v4"
     assert proposal["game_mode"] == summary["game_mode"] == metadata["game_mode"] == "normal"
@@ -71,3 +72,28 @@ def test_cli_runs_one_mock_game_from_frozen_dev_manifest(tmp_path, monkeypatch, 
     ])
     with pytest.raises(ValueError, match="metadata differs"):
         main()
+
+
+def test_status_reports_completed_run_without_provider_calls(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sys, "argv", [
+        "benchmark", "run-mock", "--condition", "dynamic_256", "--mode", "strict",
+        "--run-id", "status-demo", "--results", str(tmp_path),
+    ])
+    main()
+    capsys.readouterr()
+    monkeypatch.setattr(sys, "argv", [
+        "benchmark", "status", "--results", str(tmp_path / "status-demo"),
+    ])
+    main()
+    output = capsys.readouterr().out
+    assert "Run: status-demo" in output
+    assert "Mode: strict" in output and "Condition: dynamic_256" in output
+    assert "Requested: 1" in output and "Completed: 1" in output and "Pending: 0" in output
+
+
+def test_selected_game_subset_is_frozen_in_metadata(tmp_path) -> None:
+    path = tmp_path / "metadata.json"
+    base = {"run_id": "run", "selected_game_ids_hash": "first", "game_limit": 50}
+    _freeze_metadata(path, base)
+    with pytest.raises(ValueError, match="differs"):
+        _freeze_metadata(path, base | {"selected_game_ids_hash": "second", "game_limit": 100})

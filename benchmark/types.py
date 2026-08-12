@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class Condition(StrEnum):
@@ -86,6 +86,7 @@ class GameState:
     initial_secrets: tuple[str, ...]
     legal_guesses: tuple[str, ...]
     history: list[HistoryEntry] = field(default_factory=list)
+    information_oracle: Any | None = None
 
     def accept(self, guess: str, feedback: FeedbackPattern, decision_round: int) -> None:
         self.history.append(HistoryEntry(guess, feedback, decision_round))

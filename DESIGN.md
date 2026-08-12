@@ -749,9 +749,18 @@ Support a configurable concurrency limit, for example:
 
 Do not parallelize rounds within a single game.
 
-Support resumability: if a run is interrupted, already completed
-game/model/condition/mode keys should not be recomputed unless explicitly
-requested. Frozen run metadata includes `game_mode`; resume rejects a changed mode.
+Resumability is intentionally whole-game only. `summaries.jsonl` is the durable
+completion marker: completed game/model/condition/mode keys are never recomputed,
+while an interrupted game without a summary restarts from decision round 1.
+Proposal rows are flushed before the corresponding summary is flushed; orphan
+proposals from incomplete attempts are removed before resume and ignored by
+analysis. With concurrency `C`, interruption may cause up to `C` in-progress games
+to restart and their partial API cost may be incurred again. This tradeoff is
+accepted to keep the harness simple; no round/response checkpoints are stored.
+
+Frozen run metadata includes model/config identity, condition, mode, split,
+manifest and prompt/benchmark versions, word-list/config hashes, and a stable hash
+of the exact selected game IDs. Resume rejects any changed setting or subset.
 
 ---
 
@@ -802,6 +811,12 @@ IG*_mode = max_g IG(g)
 ```
 
 Cache aggressively. A precomputed feedback-pattern matrix for the historical answer/guess lexicons is acceptable and recommended if needed for performance.
+
+The implementation uses a frozen one-byte-per-pair historical feedback matrix.
+Its header binds it to the exact ordered answer and legal-guess vocabularies by
+SHA-256. Historical IG memory-maps this artifact; dynamic-256 continues using the
+direct deterministic scorer. Matrix lookup must be numerically identical to direct
+scoring and does not change the oracle or any experimental semantics.
 
 ---
 

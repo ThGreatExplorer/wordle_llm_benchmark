@@ -63,7 +63,7 @@ def test_analysis_exports_metrics_bootstrap_parquet_and_plots(tmp_path: Path) ->
 
 
 def test_analysis_rejects_duplicate_completed_games(tmp_path: Path) -> None:
-    row = {"model_key": "m", "condition": "hist_named", "game_mode": "normal", "game_id": "g"}
+    row = {"run_id": "r", "model_key": "m", "condition": "hist_named", "game_mode": "normal", "game_id": "g"}
     write(tmp_path / "summaries.jsonl", [row, row])
     write(tmp_path / "proposals.jsonl", [])
     try:
@@ -84,3 +84,20 @@ def test_protocol_errors_remain_in_validity_denominators() -> None:
     metrics = aggregate([summary], [proposal])
     assert metrics["initial_action_valid_at_1"] == 0
     assert metrics["initial_action_valid_at_3"] == 0
+
+
+def test_analysis_ignores_orphan_proposals(tmp_path: Path) -> None:
+    summary = {"run_id": "run", "model_key": "model", "condition": "hist_named",
+               "game_mode": "normal", "game_id": "done", "solved": True, "round_score": 1,
+               "repair_attempt_count": 0, "repair_success_count": 0, "forfeit_count": 0,
+               "played_guess_count": 1}
+    base = {"run_id": "run", "model_key": "model", "condition": "hist_named",
+            "game_mode": "normal", "decision_round": 1, "proposal_type": "initial",
+            "information_gain": [1, 1, 1], "ig_oracle": 1, "played": True,
+            "evaluations": [evaluation("VALID", True)] * 3}
+    write(tmp_path / "summaries.jsonl", [summary])
+    write(tmp_path / "proposals.jsonl", [base | {"game_id": "done"},
+                                          base | {"game_id": "orphan", "evaluations": []}])
+    analyze_results(tmp_path, tmp_path / "out", resamples=1)
+    row = next(csv.DictReader((tmp_path / "out/metrics.csv").open()))
+    assert float(row["initial_action_valid_at_1"]) == 1

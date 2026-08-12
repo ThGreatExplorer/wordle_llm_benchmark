@@ -24,6 +24,17 @@ SHA-256 provenance:
 - `wordle_extra_guesses_2022.txt`: `99be2e38dadf3e26952af7cb4d963f65b632d5de91aa99e5ce308e4dc9617b65`
 - `scowl_60_american.txt.gz`: `9cd88b0a64ae43099330ced76ab9f9bf2b59eb89d717b81e1409f639003c35cb`
 - `dynamic_master_5letter.txt`: `eb550131f527dfa497d98189256ed7a9eeea7129579f78d924073b51e10ed126`
+- `historical_feedback.bin`: `d648331b35f7b06b0c4613a6492319be24b524d639f4137c75188e74a2113d34`
+
+`historical_feedback.bin` stores one deterministic feedback-pattern byte for every
+frozen historical legal-guess × answer pair. Its header embeds both vocabulary
+hashes, and the runtime refuses a matrix that does not match. Rebuild it with:
+
+```bash
+uv run python scripts/build_historical_feedback_matrix.py
+```
+
+Generation refuses to overwrite the frozen matrix.
 
 `raw/scowl_60_american.txt.gz` is the SCOWL level-60 American English input. Build
 the frozen dynamic vocabulary with:

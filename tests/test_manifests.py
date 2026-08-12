@@ -67,6 +67,7 @@ def test_frozen_dictionary_manifest_hashes_and_provenance(tmp_path: Path) -> Non
     artifacts = [
         frozen / "wordle_answers_2022.txt", frozen / "wordle_extra_guesses_2022.txt",
         frozen / "dynamic_master_5letter.txt", data / "raw/scowl_60_american.txt.gz",
+        frozen / "historical_feedback.bin",
         *sorted(manifests.glob("*.jsonl")),
     ]
     assert all(documented[path.name] == file_sha256(path) for path in artifacts)

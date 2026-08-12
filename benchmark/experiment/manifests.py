@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from benchmark import BENCHMARK_VERSION
+from benchmark.engine.information import FeedbackMatrix
 from benchmark.types import Condition, GameState
 
 
@@ -96,6 +97,7 @@ def load_game_states(
     condition: Condition,
     answers: Iterable[str],
     extra_guesses: Iterable[str],
+    historical_feedback_matrix: Path = Path("data/frozen/historical_feedback.bin"),
 ) -> tuple[tuple[str, GameState], ...]:
     records = tuple(json.loads(line) for line in manifest.read_text().splitlines())
     if any(row.get("benchmark_version") != BENCHMARK_VERSION for row in records):
@@ -107,4 +109,5 @@ def load_game_states(
         )
     secrets = tuple(answers)
     legal = tuple(dict.fromkeys((*secrets, *extra_guesses)))
-    return tuple((row["game_id"], GameState(row["secret"], secrets, legal)) for row in records)
+    oracle = FeedbackMatrix(historical_feedback_matrix, legal, secrets)
+    return tuple((row["game_id"], GameState(row["secret"], secrets, legal, information_oracle=oracle)) for row in records)

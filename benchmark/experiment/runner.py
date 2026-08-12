@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 from collections import Counter
 from datetime import datetime, timezone
 from dataclasses import asdict, dataclass, replace
@@ -86,8 +87,12 @@ def append_result(
     with proposal_path.open("a") as proposals:
         for proposal in result.proposals:
             proposals.write(json.dumps(metadata | {"timestamp_utc": timestamp} | asdict(proposal), separators=(",", ":")) + "\n")
+        proposals.flush()
+        os.fsync(proposals.fileno())
     with summary_path.open("a") as summaries:
         summaries.write(json.dumps(metadata | {"timestamp_utc": timestamp} | asdict(result.summary), separators=(",", ":")) + "\n")
+        summaries.flush()
+        os.fsync(summaries.fileno())
 
 
 def _evaluate(
@@ -116,12 +121,14 @@ def _record(
     feasible: tuple[str, ...], input_price: float | None, output_price: float | None,
     reasoning_price: float | None, game_mode: GameMode,
 ) -> ProposalRecord:
+    information = state.information_oracle
     oracle_guesses = (
         state.legal_guesses if game_mode is GameMode.NORMAL
         else filter_candidates(state.legal_guesses, state.history)
     )
     gains = tuple(
-        information_gain(item.normalized, feasible)
+        (information.information_gain(item.normalized, feasible) if information else
+         information_gain(item.normalized, feasible))
         if item.action_valid and (game_mode is GameMode.NORMAL or item.constraint_consistent)
         else None
         for item in evaluations
@@ -140,7 +147,8 @@ def _record(
     return ProposalRecord(
         game_mode, decision_round, proposal_type, response.raw_text, evaluations, response.protocol_error,
         hashlib.sha256(prompt.encode()).hexdigest(), len(feasible), gains,
-        best_information_gain(oracle_guesses, feasible),
+        (information.best_information_gain(oracle_guesses, feasible) if information else
+         best_information_gain(oracle_guesses, feasible)),
         "legal" if game_mode is GameMode.NORMAL else "strict",
         response.input_tokens, response.output_tokens, response.reasoning_tokens,
         response.latency_ms, cost, response.provider_request_id, response.model_returned,

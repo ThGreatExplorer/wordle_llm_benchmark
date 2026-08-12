@@ -149,6 +149,10 @@ All conditions use the same neutral labels:
 
 The scorer uses standard two-pass Wordle duplicate-letter handling: exact matches are consumed first, followed by remaining misplaced matches.
 
+Historical information-gain analysis uses the frozen compact feedback matrix at
+`data/frozen/historical_feedback.bin`. This removes the multi-minute first-game
+warm-up while preserving the exact deterministic scorer's feedback partitions.
+
 A candidate word is hard-mode-consistent with the history when it would reproduce every feedback pattern already observed:
 
 ```python
@@ -312,6 +316,27 @@ Use `--limit 1` for a one-game development smoke test.
 Results are append-only JSONL under `results/<run-id>/`. Reusing the same run ID
 skips completed model/condition/mode/game keys and rejects changed run metadata,
 including attempts to resume under another mode.
+
+Resume is at whole-game granularity: rerun the exact same command with the same
+`--run-id`. Do not create a new run ID merely to resume an interrupted run.
+Completed summaries are never rerun; an in-progress game restarts from round 1.
+With concurrency `C`, up to `C` games and their partial API cost may repeat after
+interruption. No mid-game checkpoints are stored.
+
+Check a run without making provider calls:
+
+```bash
+uv run wordle-llm-benchmark status \
+  --results results/<run-id>
+```
+
+Resume automatically removes orphan proposal rows. The same cleanup is available
+without provider calls via:
+
+```bash
+uv run wordle-llm-benchmark clean-partials \
+  --results results/<run-id>
+```
 Because usage is known only after a response, concurrent cost guarding can exceed
 the limit by at most one batch (`--concurrency` games); use concurrency 1 for the
 tightest budget control.

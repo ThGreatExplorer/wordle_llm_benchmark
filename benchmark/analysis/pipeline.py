@@ -12,6 +12,7 @@ import pyarrow.parquet as pq
 
 from benchmark.analysis.bootstrap import confidence_interval
 from benchmark.analysis.dashboard import write_dashboard
+from benchmark.experiment.batch import result_key
 
 METRICS = (
     "solve_at_6", "mean_round_score", "played_guesses_per_game",
@@ -145,6 +146,8 @@ def analyze_results(results: Path, output: Path, *, resamples: int = 10_000, see
     summaries = _read(sorted(results.rglob("summaries.jsonl")))
     if not summaries:
         raise ValueError(f"no completed game summaries found under {results}")
+    completed = {result_key(row) for row in summaries}
+    proposals = [row for row in proposals if result_key(row) in completed]
     if any("game_mode" not in row for row in summaries + proposals) or any(
         "action_status" not in evaluation for row in proposals for evaluation in row.get("evaluations", [])
     ):
