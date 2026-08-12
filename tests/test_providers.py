@@ -1,7 +1,12 @@
 import asyncio
 from types import SimpleNamespace as NS
 
-from benchmark.providers import OpenAICompatibleAdapter, OpenAIResponsesAdapter, OpenRouterAdapter
+import pytest
+
+from benchmark.providers import (
+    HuggingFaceNscaleAdapter, OpenAICompatibleAdapter, OpenAIResponsesAdapter,
+)
+from benchmark.providers.openai_responses import TOP_THREE_SCHEMA
 
 
 class Capture:
@@ -44,34 +49,52 @@ def test_compatible_adapter_is_stateless_and_preserves_protocol_errors() -> None
     assert "previous_response_id" not in endpoint.request
 
 
-def test_openrouter_adapter_pins_upstream_and_disables_reasoning_and_fallbacks() -> None:
+def test_huggingface_nscale_adapter_uses_pinned_stateless_contract() -> None:
     endpoint = Capture(NS(
         choices=[NS(message=NS(content='{"guesses":["crane","slate","trace"]}'))],
-        model="qwen/qwen3-14b", provider="DeepInfra", _request_id="req",
-        usage=NS(prompt_tokens=8, completion_tokens=3, completion_tokens_details=None),
+        model="Qwen/Qwen3-8B", _request_id="req",
+        usage=NS(prompt_tokens=8, completion_tokens=3, completion_tokens_details=NS(reasoning_tokens=0)),
     ))
-    result = asyncio.run(OpenRouterAdapter(
-        "qwen/qwen3-14b", "key", "deepinfra", client=NS(chat=NS(completions=endpoint))
+    result = asyncio.run(HuggingFaceNscaleAdapter(
+        "Qwen/Qwen3-8B:nscale", "key", client=NS(chat=NS(completions=endpoint))
     ).predict("prompt"))
-    assert endpoint.request["extra_body"] == {
-        "reasoning": {"effort": "none"},
-        "provider": {"order": ["deepinfra"], "allow_fallbacks": False, "require_parameters": True},
+    assert endpoint.request["model"] == "Qwen/Qwen3-8B:nscale"
+    assert endpoint.request["messages"] == [{"role": "user", "content": "prompt"}]
+    assert endpoint.request["temperature"] == 0
+    assert endpoint.request["reasoning_effort"] == "none"
+    assert endpoint.request["response_format"]["json_schema"]["schema"] == TOP_THREE_SCHEMA
+    assert "previous_response_id" not in endpoint.request
+    assert result.raw_text == '{"guesses":["crane","slate","trace"]}'
+    assert result.model_returned == "Qwen/Qwen3-8B" and result.reasoning_tokens == 0
+
+
+def test_huggingface_nscale_adapter_rejects_unpinned_model() -> None:
+    with pytest.raises(ValueError, match=":nscale"):
+        HuggingFaceNscaleAdapter("Qwen/Qwen3-8B", "key", client=object())
+
+
+def test_huggingface_nscale_adapter_preserves_malformed_output() -> None:
+    endpoint = Capture(NS(
+        choices=[NS(message=NS(content="not json"))], model="Qwen/Qwen3-8B",
+        _request_id="req", usage=None,
+    ))
+    result = asyncio.run(HuggingFaceNscaleAdapter(
+        "Qwen/Qwen3-8B:nscale", "key", client=NS(chat=NS(completions=endpoint))
+    ).predict("prompt"))
+    assert result.raw_text == "not json"
+    assert result.guesses is None and result.protocol_error == "PROTOCOL_ERROR"
+
+
+def test_huggingface_nscale_adapter_configures_bounded_sdk_retries(monkeypatch) -> None:
+    captured = {}
+
+    def client(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr("benchmark.providers.openai_compatible.AsyncOpenAI", client)
+    HuggingFaceNscaleAdapter("Qwen/Qwen3-8B:nscale", "key")
+    assert captured == {
+        "api_key": "key", "base_url": "https://router.huggingface.co/v1",
+        "max_retries": 5, "timeout": 120.0,
     }
-    assert endpoint.request["extra_headers"] == {"X-OpenRouter-Metadata": "enabled"}
-    assert result.model_returned == "qwen/qwen3-14b"
-    assert result.provider_returned == "DeepInfra"
-
-
-def test_openrouter_reads_provider_from_sdk_extra_metadata() -> None:
-    endpoint = Capture(NS(
-        choices=[NS(message=NS(content='{"guesses":["crane","slate","trace"]}'))],
-        model="qwen/qwen3-8b", model_extra={
-            "openrouter_metadata": {"attempts": [{"provider": "Alibaba", "model": "qwen/qwen3-8b:actual", "status": 200}]},
-        }, _request_id="req", usage=None,
-    ))
-    result = asyncio.run(OpenRouterAdapter(
-        "qwen/qwen3-8b", "key", "alibaba", client=NS(chat=NS(completions=endpoint))
-    ).predict("prompt"))
-    assert result.provider_returned == "Alibaba"
-    assert result.model_returned == "qwen/qwen3-8b:actual"
-    assert result.provider_metadata["attempts"][0]["status"] == 200

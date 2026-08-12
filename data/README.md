@@ -43,7 +43,11 @@ Both commands refuse to overwrite frozen artifacts unless `--force` is explicit.
 
 Frozen manifest SHA-256 hashes:
 
-- `dev_historical.jsonl`: `dc941e3d9cd87d3124957f45898de258d046421219c10098ce0c603492e5e15f`
-- `eval_historical.jsonl`: `49af93d015b3e7a1c83aba1832136dc2b4da6dafe1ca94b26ba7b16989d5acf3`
-- `dev_dynamic.jsonl`: `6e93a8debde88562ff32735fceda4c9a875e6a9d4186c0d173bc82528c8467bc`
-- `eval_dynamic.jsonl`: `d309ae4704863b6651185c9d12f4df22e79b7086269daeeac5433af2f2e83b38`
+- `dev_historical.jsonl`: `5eccb79364c3abb677833180756eb2ffbb504da3fbb7373469c186e5d9b258a7`
+- `eval_historical.jsonl`: `c5c2690428e50a8550ede0d365ca7b2263194d47befad8925c277e5c73d56fde`
+- `dev_dynamic.jsonl`: `c7db0b49490471b1b214b333526b2d0b84b4c3233387aae7b48462667de870e8`
+- `eval_dynamic.jsonl`: `07f14a21e8af7dab236f76e89944e7dd5572a9696939622df1a38dbb4159e417`
+
+The `mvp-v3` migration changed only each manifest record's `benchmark_version` from
+`mvp-v2`; all materialized game IDs, secrets, pools, seeds, counts, and ordering
+remain identical.

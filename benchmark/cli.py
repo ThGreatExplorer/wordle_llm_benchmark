@@ -16,7 +16,7 @@ import yaml
 from benchmark.experiment.manifests import generate_manifests, load_game_states, load_words
 from benchmark import BENCHMARK_VERSION, PROMPT_VERSION
 from benchmark.experiment.batch import run_batch
-from benchmark.providers import MockAdapter, OpenAIResponsesAdapter, OpenRouterAdapter
+from benchmark.providers import HuggingFaceNscaleAdapter, MockAdapter, OpenAIResponsesAdapter
 from benchmark.types import Condition
 
 
@@ -44,11 +44,18 @@ def _required_env(name: str) -> str:
     return value
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be positive")
+    return parsed
+
+
 def _metadata(
     run_id: str, config_path: Path, models_path: Path, config: dict,
     selected_model: dict, manifest: Path,
 ) -> dict:
-    return {
+    metadata = {
         "run_id": run_id,
         "started_at_utc": datetime.now(timezone.utc).isoformat(),
         "git_commit": subprocess.run(
@@ -71,6 +78,18 @@ def _metadata(
         "selected_manifest": manifest.name,
         "selected_model_config": selected_model,
     }
+    if selected_model.get("provider") == "huggingface_nscale":
+        metadata |= {
+            "gateway": "huggingface_inference_providers",
+            "inference_provider": selected_model["inference_provider"],
+            "requested_model_id": selected_model["model"],
+            "base_url": selected_model["base_url"],
+            "reasoning_effort": selected_model["reasoning_effort"],
+            "temperature": selected_model["temperature"],
+            "structured_output_enabled": True,
+            "max_retries": 5,
+        }
+    return metadata
 
 
 def main() -> None:
@@ -89,6 +108,7 @@ def main() -> None:
     run.add_argument("--results", type=Path, default=Path("results"))
     run.add_argument("--concurrency", type=int, default=1)
     run.add_argument("--max-cost-usd", type=float)
+    run.add_argument("--limit", type=_positive_int)
     mock = subparsers.add_parser("run-mock")
     mock.add_argument("--config", type=Path, default=Path("configs/benchmark.yaml"))
     mock.add_argument("--condition", type=Condition, choices=list(Condition), default=Condition.DYNAMIC_256)
@@ -111,17 +131,14 @@ def main() -> None:
                 model_config["model"], reasoning_effort=model_config.get("reasoning_effort"),
                 temperature=model_config.get("temperature"),
             )
-        elif model_config["provider"] == "openrouter":
-            api_key_env = model_config.get("api_key_env", "OPENROUTER_API_KEY")
-            adapter = OpenRouterAdapter(
+        elif model_config["provider"] == "huggingface_nscale":
+            api_key_env = model_config.get("api_key_env", "HF_TOKEN")
+            adapter = HuggingFaceNscaleAdapter(
                 model_config["model"],
                 api_key=_required_env(api_key_env),
-                upstream_provider=model_config["upstream_provider"],
                 base_url=model_config["base_url"],
                 temperature=model_config.get("temperature", 0),
                 reasoning_effort=model_config["reasoning_effort"],
-                allow_fallbacks=model_config["allow_fallbacks"],
-                require_parameters=model_config["require_parameters"],
             )
         else:
             raise ValueError(f"unknown provider {model_config['provider']}")
@@ -131,24 +148,38 @@ def main() -> None:
             manifest, args.condition, load_words(Path(benchmark_config["answers"])),
             load_words(Path(benchmark_config["extra_guesses"])),
         )
+        if args.limit is not None:
+            games = games[:args.limit]
         output = args.results / args.run_id
         output.mkdir(parents=True, exist_ok=True)
         metadata = _metadata(args.run_id, args.config, args.models_config, benchmark_config,
                              model_config, manifest)
+        metadata["game_limit"] = args.limit
         metadata_path = output / "metadata.json"
         _resume_metadata(metadata_path, metadata)
         prices = (
-            model_config.get("input_price_per_million", 0),
-            model_config.get("output_price_per_million", 0),
+            model_config.get("input_price_per_million"),
+            model_config.get("output_price_per_million"),
             model_config.get("reasoning_price_per_million", 0),
         )
+        proposal_metadata = {
+            "benchmark_version": BENCHMARK_VERSION, "prompt_version": PROMPT_VERSION,
+            "manifest_hash": _hash(manifest), "model_config_hash": _hash(args.models_config),
+            "provider": model_config["provider"], "requested_model_id": model_config["model"],
+            "reasoning_effort": model_config.get("reasoning_effort"),
+            "temperature": model_config.get("temperature"), "structured_output_enabled": True,
+        }
+        if model_config["provider"] == "huggingface_nscale":
+            proposal_metadata |= {
+                "gateway": "huggingface_inference_providers",
+                "inference_provider": model_config["inference_provider"],
+                "base_url": model_config["base_url"], "max_retries": 5,
+            }
         results = asyncio.run(run_batch(
             adapter, args.condition, games, output / "proposals.jsonl", output / "summaries.jsonl",
             run_id=args.run_id, model_key=args.model, concurrency=args.concurrency,
             max_cost_usd=args.max_cost_usd, prices=prices,
-            metadata={"benchmark_version": BENCHMARK_VERSION, "prompt_version": PROMPT_VERSION,
-                      "manifest_hash": _hash(manifest), "model_config_hash": _hash(args.models_config),
-                      "provider": model_config["provider"], "requested_model_id": model_config["model"]},
+            metadata=proposal_metadata,
         ))
         print(f"completed {len(results)} games")
     elif args.command == "run-mock":

@@ -274,15 +274,18 @@ uv run python -m benchmark run \
   --max-cost-usd 1
 ```
 
-For Qwen, set `OPENROUTER_API_KEY`. The frozen Qwen3 8B, 14B, and 32B tracks use
-OpenRouter's OpenAI-compatible endpoint; local model serving is not part of this
-benchmark. Each request is stateless, and the runner never passes a conversation
-or previous-response ID.
+For Qwen, set `HF_TOKEN`. The frozen Qwen3 8B, 14B, and 32B tracks use Hugging
+Face Inference Providers through its OpenAI-compatible endpoint. Each request is
+stateless, and the runner never passes a conversation or previous-response ID.
 
-Final evaluation pins Alibaba for Qwen3 8B and DeepInfra for Qwen3 14B/32B.
-Fallbacks are disabled, requested parameters are mandatory, and reasoning effort
-is `none`. Every request opts into OpenRouter router metadata; each proposal records
-the returned model, actual upstream provider, and complete routing attempts.
+Final evaluation explicitly pins Nscale for all three Qwen sizes through the model
+IDs `Qwen/Qwen3-8B:nscale`, `Qwen/Qwen3-14B:nscale`, and
+`Qwen/Qwen3-32B:nscale`. Reasoning effort is `none`, strict structured output is
+required, and each proposal records the exact requested and returned model IDs.
+
+Qwen pricing remains unset until it is checked immediately before final evaluation,
+so estimated costs are `null` and `--max-cost-usd` is unavailable for these runs.
+Use `--limit 1` for a one-game development smoke test.
 
 Results are append-only JSONL under `results/<run-id>/`. Reusing the same run ID
 skips completed model/condition/game keys and rejects changed run metadata.
@@ -297,7 +300,7 @@ tightest budget control.
 - Python 3.11 or newer
 - [`uv`](https://docs.astral.sh/uv/)
 - API credentials only for providers you intend to run
-- OpenRouter account and API key for the Qwen tracks
+- Hugging Face token authorized for Inference Providers calls for the Qwen tracks
 
 The project uses `uv` for dependency management, virtual environments, locking, and command execution.
 
@@ -400,7 +403,7 @@ Only after deterministic and mock tests pass, connect real providers.
 The benchmark needs two main adapter styles:
 
 - OpenAI Responses API;
-- OpenRouter's OpenAI-compatible endpoint for Qwen inference.
+- Hugging Face Inference Providers' OpenAI-compatible endpoint with Nscale pinned for Qwen inference.
 
 Provider-specific model IDs, endpoints, prices, and reasoning settings belong in configuration rather than game code.
 
@@ -482,12 +485,12 @@ For the primary benchmark, use direct/non-thinking or the lowest practical reaso
 
 ## Qwen execution
 
-Qwen models run through the dedicated stateless OpenRouter adapter. Local serving,
-direct use of the generic compatible adapter, and other aggregators are outside
-the frozen benchmark protocol. Upstream provider pins and routing controls live in
-`configs/models.yaml`.
+Qwen models run through the dedicated stateless Hugging Face/Nscale adapter.
+Direct use of the generic compatible adapter and automatic provider-selection
+policies are outside the frozen benchmark protocol. Exact `:nscale` model IDs live
+in `configs/models.yaml`.
 
-The frozen Qwen scaling comparison is Qwen3 8B → 14B → 32B, with all three routed through OpenRouter.
+The frozen Qwen scaling comparison is Qwen3 8B → 14B → 32B, with all three served by Nscale through Hugging Face Inference Providers.
 
 ---
 
@@ -511,7 +514,7 @@ pricing configuration
 host/platform metadata
 ```
 
-For OpenRouter Qwen runs, also record requested and returned model identifiers, the configured provider pin, the actual upstream provider and complete router-attempt metadata on every response, fallback/parameter-routing settings, pricing configuration, and reasoning mode.
+For Hugging Face/Nscale Qwen runs, also record the gateway, exact `:nscale` requested model identifier, returned model identifier when exposed, Nscale pin, base URL, pricing configuration, structured-output setting, and reasoning mode.
 
 Raw results should be treated as immutable experiment artifacts. Analysis should read raw logs and write derived tables/figures separately rather than mutating the original records.
 

@@ -1,6 +1,6 @@
 # Wordle LLM Benchmark: MVP Design Specification
 
-**Status:** Frozen MVP v2 design for implementation
+**Status:** Frozen MVP v3 design for implementation
 **Audience:** Codex / software engineer implementing the benchmark
 **Primary language:** Python 3.11+
 **Purpose:** Build a reproducible benchmark for multi-turn lexical constraint reasoning across six language models.
@@ -55,7 +55,7 @@ Do not hard-code provider-specific model IDs into game logic. Put exact model id
 
 For the main benchmark, use direct/non-thinking or the lowest practical reasoning mode so that inference-time reasoning budgets are not intentionally varied across families. Record the exact inference configuration for every run.
 
-All Qwen tracks MUST run through the dedicated stateless OpenRouter adapter using its OpenAI-compatible Chat Completions endpoint. Use the frozen OpenRouter model slugs `qwen/qwen3-8b`, `qwen/qwen3-14b`, and `qwen/qwen3-32b`. Final evaluation pins Alibaba (`alibaba`) for 8B and DeepInfra (`deepinfra`) for 14B and 32B. Disable fallbacks, require routed providers to support every requested parameter including structured outputs, and disable reasoning with effort `none`. Record the actual returned model and upstream provider metadata for every response.
+All Qwen tracks MUST run through the dedicated stateless Hugging Face Inference Providers adapter using its OpenAI-compatible Chat Completions endpoint. Use the frozen model IDs `Qwen/Qwen3-8B:nscale`, `Qwen/Qwen3-14B:nscale`, and `Qwen/Qwen3-32B:nscale`, explicitly pinning Nscale for all sizes. Require strict structured output, disable reasoning with effort `none`, and record the exact requested and returned model metadata for every response.
 
 ---
 
@@ -181,7 +181,7 @@ Example:
 
 ```json
 {
-  "benchmark_version": "mvp-v2",
+  "benchmark_version": "mvp-v3",
   "game_id": "hist_0042",
   "secret": "crane"
 }
@@ -195,7 +195,7 @@ Example:
 
 ```json
 {
-  "benchmark_version": "mvp-v2",
+  "benchmark_version": "mvp-v3",
   "game_id": "dynamic_0042",
   "pool_seed": 82910422,
   "secret_seed": 19328501,
@@ -302,21 +302,11 @@ A historical legal guess may be a non-answer word, but it still must be fully co
 
 Use one canonical output contract and nearly identical rules across conditions. The purpose of `hist_named` versus `hist_unnamed` is to isolate recognition of the task name, not to change the underlying explanation.
 
-All prompts should have an explicit version identifier in code, for example `prompt-v1`.
+The frozen prompt version is `prompt-v3`. Development runs with prompt-v2 showed that models frequently interpreted "fully consistent" differently from the benchmark's deterministic validator. Prompt-v3 therefore defines strict consistency operationally without changing the underlying validity rule or providing strategy assistance.
 
 ### 10.1 Common output instruction
 
-Every prediction must request exactly three ranked guesses, best first.
-
-Canonical semantic contract:
-
-```json
-{
-  "guesses": ["crane", "slate", "trace"]
-}
-```
-
-The schema may enforce:
+Every prediction requests exactly three ranked guess strings, best first. The API schema may enforce:
 
 - one object;
 - one `guesses` field;
@@ -328,62 +318,83 @@ Do not ask for chain-of-thought or explanations. The benchmark output is the thr
 
 ### 10.2 Named historical prompt
 
-Use wording equivalent to the following and freeze the exact final text:
+The named prompt uses this frozen instructional prose:
 
 ```text
-You are playing Wordle under a strict hard-mode rule.
+You are playing Wordle under a strict consistency rule.
 
-The secret is a five-letter English word.
+Your goal is to identify the secret five-letter English word within at most six decision rounds.
 
-After each accepted guess, you receive one label for each letter:
-- EXACT: the letter is in the secret at this exact position.
+After each accepted guess, you receive exactly one feedback label for each letter:
+- EXACT: the letter matches the secret at this exact position.
 - PRESENT: the letter occurs in the secret, but not at this position among the still-unmatched letters.
 - ABSENT: no unmatched occurrence of this letter remains in the secret.
 
-Every new guess must be a legal five-letter Wordle guess and must be fully consistent with all feedback from every previous accepted guess.
+Duplicate letters are evaluated as follows:
+1. Assign all EXACT matches first.
+2. For the remaining positions, assign PRESENT only while an unmatched occurrence of that letter remains in the secret.
+3. Otherwise assign ABSENT.
 
-Return exactly three ranked next guesses, from best to worst, using the required JSON format. Do not include explanation.
+STRICT CONSISTENCY RULE
+
+Every one of the three guesses you return must be a legal five-letter Wordle guess and must independently satisfy every previous accepted feedback row.
+
+To check whether a proposed word is consistent, temporarily treat that proposed word as if it were the secret. Re-evaluate each previous accepted guess against that proposed word using the feedback rules above.
+
+For every previous accepted row, the five feedback labels produced in this check must exactly match the five recorded feedback labels for that row.
+
+If even one label differs for any previous row, the proposed word is invalid.
+
+You must check every previous accepted row, not only the most recent one.
+
+Only your first-ranked guess will actually be played. The second and third guesses are alternate recommendations, but they must also be valid under all of the same rules.
+
+Before answering, silently verify each of your three proposed guesses against every previous accepted feedback row.
+
+Return exactly one JSON object with exactly one field named "guesses". Its value must be an array of exactly three guess strings ranked from best to worst.
+
+Do not include explanations, reasoning, or any other fields.
 ```
 
-Then append the full accepted public history and the current round number.
+This specifies validity only. It provides no strategy, opening-word, information-gain, feasible-count, or remaining-candidate assistance.
 
 ### 10.3 Unnamed historical prompt
 
-This should differ from the named prompt only where necessary to remove explicit task recognition:
+The unnamed prompt is identical in rule clarity and output contract, with only these task-identifying phrases changed:
 
-```text
-You are playing a five-letter word deduction game under a strict consistency rule.
-
-The secret is a five-letter English word.
-
-After each accepted guess, you receive one label for each letter:
-- EXACT: the letter is in the secret at this exact position.
-- PRESENT: the letter occurs in the secret, but not at this position among the still-unmatched letters.
-- ABSENT: no unmatched occurrence of this letter remains in the secret.
-
-Every new guess must be a legal five-letter English guess for this game and must be fully consistent with all feedback from every previous accepted guess.
-
-Return exactly three ranked next guesses, from best to worst, using the required JSON format. Do not include explanation.
-```
+- `You are solving a five-letter word deduction game under a strict consistency rule.`
+- `Every one of the three guesses you return must be a legal five-letter English guess for this game and must independently satisfy every previous accepted feedback row.`
 
 The frozen instructional prose must not use the words `Wordle`, `green`, `yellow`, `gray`, `NYT`, or `hard mode`. Lexical payloads such as candidate lists, accepted guesses, and rejected proposals are preserved verbatim and are excluded from this contamination check.
 
 ### 10.4 Dynamic-256 prompt
 
-Use the unnamed rules, then add:
+Use the exact unnamed rules, then add:
 
 ```text
+CANDIDATE SET
+
 For this game, the secret was selected uniformly from exactly the 256 candidate words listed below.
 
-Every guess must:
-1. be one of these 256 words; and
-2. be fully consistent with all feedback from every previous accepted guess.
+These 256 words are also the complete legal guess set for this game.
+
+Every one of the three guesses you return must:
+1. appear exactly in the candidate list below; and
+2. satisfy the strict consistency rule for every previous accepted feedback row.
+
+A word that satisfies the feedback constraints but is not in the candidate list is invalid.
 
 Candidate words, in fixed order:
 <256 WORDS>
 ```
 
 The 256 words are included on **every** reconstructed turn, in the same fixed order for that instance.
+
+### 10.5 Public history and repair formatting
+
+Normal prompts contain only accepted public history, formatted as numbered rows with separate `Guess:` and `Feedback:` lines, followed by `Current decision round: N of 6`. Empty history is shown as `(none)`. They never contain the secret, feasible-set information, earlier rejected guesses, or prior alternate suggestions.
+
+Repair prompts reconstruct the complete current prompt and append only the immediately preceding rejected top-1 plus its error class and semantic meaning. `CONSTRAINT_ERROR` explains the operational consistency failure but does not identify the violated row. Historical and dynamic `LEXICON_ERROR` distinguish illegal historical guesses from words outside the 256-word list. `FORMAT_ERROR` states the five-ASCII-letter requirement. `PROTOCOL_ERROR` describes the malformed response structure without inventing a rejected guess. No repair identifies an exact violated clue or supplies a replacement.
 
 ---
 
@@ -530,11 +541,11 @@ Implement at least:
 ```text
 providers/openai_responses.py
 providers/openai_compatible.py
-providers/openrouter.py
+providers/huggingface_nscale.py
 providers/mock.py
 ```
 
-`openrouter.py` is the dedicated Qwen adapter. Its model, upstream provider, routing controls, and base URL remain explicit configuration, while every request is stateless. `openai_compatible.py` is only the shared transport implementation; do not use it directly for primary Qwen runs or use locally hosted Qwen models.
+`huggingface_nscale.py` is the dedicated Qwen adapter. Its exact provider-suffixed model and base URL remain explicit configuration, while every request is stateless. `openai_compatible.py` is only the shared transport implementation; do not use it directly for primary Qwen runs.
 
 ### Provider responsibilities
 
@@ -591,17 +602,17 @@ models:
     reasoning_effort: <none/direct mode if supported>
 
   qwen3_8b:
-    provider: openrouter
-    base_url: https://openrouter.ai/api/v1
-    model: qwen/qwen3-8b
-    upstream_provider: alibaba
-    allow_fallbacks: false
-    require_parameters: true
+    provider: huggingface_nscale
+    base_url: https://router.huggingface.co/v1
+    model: Qwen/Qwen3-8B:nscale
+    inference_provider: nscale
     reasoning_effort: none
     temperature: 0
+    input_price_per_million: null
+    output_price_per_million: null
 ```
 
-Repeat for Qwen3 14B and 32B using their exact OpenRouter slugs and pin `deepinfra` as the upstream provider.
+Repeat for Qwen3 14B and 32B using their exact Hugging Face model IDs with the `:nscale` suffix.
 
 Do not assume deterministic inference merely because temperature is zero. Record configuration and treat the 150 frozen instances as the experimental sample. If a provider exposes a request seed, it may be recorded/used, but the benchmark must not rely on it for correctness.
 
@@ -1162,7 +1173,7 @@ wordle-llm-benchmark/
 │   │   ├── mock.py
 │   │   ├── openai_responses.py
 │   │   ├── openai_compatible.py
-│   │   └── openrouter.py
+│   │   └── huggingface_nscale.py
 │   │
 │   ├── experiment/
 │   │   ├── runner.py
@@ -1309,7 +1320,9 @@ provider/model identifiers
 pricing config used
 ```
 
-For OpenRouter Qwen runs, opt into router metadata on every request and additionally record the requested model slug, configured upstream provider slug, returned model identifier, actual returned upstream provider, complete router-attempt metadata for every response, fallback/parameter-routing settings, pricing configuration, and reasoning mode.
+For Hugging Face/Nscale Qwen runs, additionally record the gateway, exact requested `:nscale` model identifier, returned model identifier when exposed, configured inference provider, base URL, structured-output setting, pricing configuration, and reasoning mode.
+
+Unknown pricing MUST produce `null` estimated costs. Do not record zero cost or use a dollar cost guard until pricing has been explicitly configured.
 
 ---
 
@@ -1345,7 +1358,7 @@ Implement in this order so external API cost is incurred only after deterministi
 ### Milestone 4: provider integration
 
 - official OpenAI Responses adapter;
-- OpenRouter adapter through its OpenAI-compatible endpoint for Qwen;
+- Hugging Face Inference Providers adapter with Nscale pinned for Qwen;
 - token/latency/cost capture;
 - transient infrastructure retries;
 - concurrency and resume.
@@ -1381,7 +1394,7 @@ Do NOT add these unless the core benchmark is complete:
 
 ## 29. Frozen Qwen deployment decision
 
-The primary benchmark uses OpenRouter exclusively for Qwen3 8B, 14B, and 32B. Do not substitute another deployment or Qwen generation without creating a new benchmark version and rerunning all affected comparisons. Fine-tuning remains outside the MVP.
+The primary benchmark uses Hugging Face Inference Providers with Nscale explicitly pinned for Qwen3 8B, 14B, and 32B. Do not substitute another deployment, provider policy, or Qwen generation without creating a new benchmark version and rerunning all affected comparisons. Fine-tuning remains outside the MVP.
 
 ---
 
@@ -1395,7 +1408,7 @@ The MVP is complete when all of the following are true:
 4. a mock provider can run the entire game/repair protocol end to end;
 5. OpenAI and OpenAI-compatible provider adapters can execute stateless calls;
 6. one development game can be run successfully for an OpenAI model;
-7. one development game can be run successfully against each configured OpenRouter Qwen track;
+7. one development game can be run successfully against each configured Hugging Face/Nscale Qwen track;
 8. results are resumable and logged without duplicate completed games;
 9. the analysis command computes primary metrics plus the agreed behavioral metrics;
 10. no evaluation run depends on persistent LLM session state;

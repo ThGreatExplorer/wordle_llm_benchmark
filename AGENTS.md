@@ -160,7 +160,7 @@ Implement and test:
 Only after Milestones 1–3 pass:
 
 - OpenAI Responses API adapter;
-- OpenRouter adapter through its OpenAI-compatible endpoint for Qwen;
+- Hugging Face Inference Providers adapter with Nscale pinned for Qwen;
 - token/latency/cost capture;
 - transient retry handling;
 - bounded concurrency;
@@ -389,7 +389,7 @@ Credentials come from environment variables or secret management. Never commit k
 
 Exact provider model IDs and prices belong in configuration, not game logic.
 
-Qwen tracks must use the dedicated stateless OpenRouter adapter. Final evaluation pins `alibaba` for Qwen3 8B and `deepinfra` for Qwen3 14B/32B, disables fallbacks, requires all requested parameters, and sets reasoning effort to `none`. Opt into router metadata and record the returned upstream provider, model, and complete router-attempt metadata on every proposal; do not substitute direct generic-adapter or local-vLLM execution.
+Qwen tracks must use the dedicated stateless Hugging Face Inference Providers adapter. Final evaluation uses Nscale for Qwen3 8B, 14B, and 32B through exact `:nscale` model suffixes, with reasoning effort `none` and strict structured output. Record the exact requested model and returned model metadata on every proposal; never omit or replace the provider suffix.
 
 ---
 

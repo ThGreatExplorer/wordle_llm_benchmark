@@ -1,5 +1,6 @@
 import asyncio
 import json
+import pytest
 
 from benchmark.experiment.batch import run_batch
 from benchmark.types import Condition, GameState, ModelResponse
@@ -39,3 +40,18 @@ def test_batch_is_bounded_resumable_and_costed(tmp_path) -> None:
         run_id="run", model_key="model", concurrency=2,
     ))
     assert resumed == () and len(summaries.read_text().splitlines()) == 3
+
+
+def test_unknown_pricing_is_null_and_rejects_cost_guard(tmp_path) -> None:
+    game = ("game", GameState("slate", ("slate",), ("slate", "crane", "trace")))
+    proposals, summaries = tmp_path / "proposals.jsonl", tmp_path / "summaries.jsonl"
+    result = asyncio.run(run_batch(
+        SolvingAdapter(), Condition.HIST_NAMED, [game], proposals, summaries,
+        run_id="run", model_key="model", prices=(None, None, 0),
+    ))
+    assert result[0].summary.estimated_cost_usd_total is None
+    with pytest.raises(ValueError, match="requires configured model pricing"):
+        asyncio.run(run_batch(
+            SolvingAdapter(), Condition.HIST_NAMED, [game], proposals, summaries,
+            run_id="other", model_key="model", prices=(None, None, 0), max_cost_usd=1,
+        ))

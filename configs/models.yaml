@@ -17,27 +17,19 @@ models:
     reasoning_effort: none
     input_price_per_million: 5
     output_price_per_million: 30
-  qwen3_8b: &qwen
-    provider: openrouter
-    base_url: https://openrouter.ai/api/v1
-    api_key_env: OPENROUTER_API_KEY
-    model: qwen/qwen3-8b
-    upstream_provider: alibaba
-    allow_fallbacks: false
-    require_parameters: true
+  qwen3_8b: &qwen_nscale
+    provider: huggingface_nscale
+    base_url: https://router.huggingface.co/v1
+    api_key_env: HF_TOKEN
+    model: Qwen/Qwen3-8B:nscale
+    inference_provider: nscale
     reasoning_effort: none
     temperature: 0
-    input_price_per_million: 0.117
-    output_price_per_million: 0.455
+    input_price_per_million: null
+    output_price_per_million: null
   qwen3_14b:
-    <<: *qwen
-    model: qwen/qwen3-14b
-    upstream_provider: deepinfra
-    input_price_per_million: 0.12
-    output_price_per_million: 0.24
+    <<: *qwen_nscale
+    model: Qwen/Qwen3-14B:nscale
   qwen3_32b:
-    <<: *qwen
-    model: qwen/qwen3-32b
-    upstream_provider: deepinfra
-    input_price_per_million: 0.08
-    output_price_per_million: 0.28
+    <<: *qwen_nscale
+    model: Qwen/Qwen3-32B:nscale

@@ -32,16 +32,19 @@ class OpenAICompatibleAdapter:
         *,
         api_key: str = "not-required",
         temperature: float = 0,
+        reasoning_effort: str | None = None,
+        max_retries: int = 3,
         extra_body: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
         client: Any | None = None,
     ) -> None:
         self.model = model
         self.temperature = temperature
+        self.reasoning_effort = reasoning_effort
         self.extra_body = extra_body
         self.extra_headers = extra_headers
         self.client = client or AsyncOpenAI(
-            api_key=api_key, base_url=base_url, max_retries=3, timeout=120.0
+            api_key=api_key, base_url=base_url, max_retries=max_retries, timeout=120.0
         )
 
     async def predict(self, prompt: str) -> ModelResponse:
@@ -54,6 +57,8 @@ class OpenAICompatibleAdapter:
                 "json_schema": {"name": "top_three_guesses", "strict": True, "schema": TOP_THREE_SCHEMA},
             },
         }
+        if self.reasoning_effort is not None:
+            request["reasoning_effort"] = self.reasoning_effort
         if self.extra_body:
             request["extra_body"] = self.extra_body
         if self.extra_headers:

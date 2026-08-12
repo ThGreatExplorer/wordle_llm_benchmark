@@ -56,7 +56,7 @@ class GameSummary:
     input_tokens_total: int
     output_tokens_total: int
     reasoning_tokens_total: int
-    estimated_cost_usd_total: float
+    estimated_cost_usd_total: float | None
     latency_ms_total: float
 
 
@@ -100,14 +100,19 @@ def _evaluate(
 def _record(
     response: ModelResponse, evaluations: tuple[GuessEvaluation, ...], prompt: str,
     proposal_type: str, decision_round: int, state: GameState,
-    feasible: tuple[str, ...], input_price: float, output_price: float, reasoning_price: float,
+    feasible: tuple[str, ...], input_price: float | None, output_price: float | None,
+    reasoning_price: float | None,
 ) -> ProposalRecord:
     valid_legal = filter_candidates(state.legal_guesses, state.history)
     gains = tuple(
         information_gain(item.normalized, feasible) if item.valid else None for item in evaluations
     )
     cost = None
-    if response.input_tokens is not None or response.output_tokens is not None or response.reasoning_tokens is not None:
+    if None not in (input_price, output_price, reasoning_price) and (
+        response.input_tokens is not None
+        or response.output_tokens is not None
+        or response.reasoning_tokens is not None
+    ):
         cost = (
             (response.input_tokens or 0) * input_price
             + (response.output_tokens or 0) * output_price
@@ -126,8 +131,8 @@ def _record(
 
 async def run_game(
     adapter: ModelAdapter, condition: Condition, state: GameState, *,
-    input_price_per_million: float = 0, output_price_per_million: float = 0,
-    reasoning_price_per_million: float = 0,
+    input_price_per_million: float | None = 0, output_price_per_million: float | None = 0,
+    reasoning_price_per_million: float | None = 0,
 ) -> GameResult:
     proposals: list[ProposalRecord] = []
     initial_invalid = repairs = repair_successes = forfeits = 0
@@ -145,7 +150,7 @@ async def run_game(
         if top1 is None or not top1.valid:
             initial_invalid += 1
             repairs += 1
-            rejected = top1.raw if top1 else "<unavailable>"
+            rejected = top1.raw if top1 else None
             error: GuessStatus | str = top1.status if top1 else "PROTOCOL_ERROR"
             prompt = build_prompt(condition, state, decision_round, rejected, error)
             response = await adapter.predict(prompt)
@@ -187,7 +192,8 @@ async def run_game(
         sum(item.input_tokens or 0 for item in proposals),
         sum(item.output_tokens or 0 for item in proposals),
         sum(item.reasoning_tokens or 0 for item in proposals),
-        sum(item.estimated_cost_usd or 0 for item in proposals),
+        None if any(item.estimated_cost_usd is None for item in proposals)
+        else sum(item.estimated_cost_usd for item in proposals if item.estimated_cost_usd is not None),
         sum(item.latency_ms for item in proposals),
     )
     return GameResult(tuple(proposals), summary, state)

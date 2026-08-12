@@ -1,4 +1,5 @@
 import json
+import hashlib
 import re
 from pathlib import Path
 
@@ -34,10 +35,27 @@ def test_frozen_manifest_shapes() -> None:
     historical = [json.loads(line) for line in (root / "eval_historical.jsonl").read_text().splitlines()]
     dynamic = [json.loads(line) for line in (root / "eval_dynamic.jsonl").read_text().splitlines()]
     assert len(historical) == len(dynamic) == 150
-    assert BENCHMARK_VERSION == "mvp-v2"
+    assert BENCHMARK_VERSION == "mvp-v3"
     assert all(row["benchmark_version"] == BENCHMARK_VERSION for row in historical + dynamic)
     assert len({row["secret"] for row in historical}) == 150
     assert all(len(row["pool"]) == len(set(row["pool"])) == 256 and row["secret"] in row["pool"] for row in dynamic)
+
+
+def test_v3_manifest_migration_changed_only_version_metadata() -> None:
+    expected_payload_hashes = {
+        "dev_dynamic.jsonl": "3b571fae4adc38f99bd34462ade24476832e37a8e9e482408a220e60bf3b7c49",
+        "dev_historical.jsonl": "9d6883df1f30196a3ea0cb25c60ca48ce51c4d5a5987838d17ea8bd03305364d",
+        "eval_dynamic.jsonl": "71db39018cf7fda181df5b2fab65f8fd25ac098858f6d84abadb9e6c5e0422fc",
+        "eval_historical.jsonl": "faafe699c0e7936f2332c00e1a0577cdc2c53c8ce5ad0b8af7e440aab677eb63",
+    }
+    for path in sorted(Path("data/manifests").glob("*.jsonl")):
+        rows = []
+        for line in path.read_text().splitlines():
+            row = json.loads(line)
+            assert row.pop("benchmark_version") == "mvp-v3"
+            rows.append(row)
+        digest = hashlib.sha256(json.dumps(rows, separators=(",", ":")).encode()).hexdigest()
+        assert digest == expected_payload_hashes[path.name]
 
 
 def test_frozen_dictionary_manifest_hashes_and_provenance(tmp_path: Path) -> None:
