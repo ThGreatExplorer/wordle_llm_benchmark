@@ -11,11 +11,14 @@ from benchmark.engine.feedback import score
 from benchmark.engine.information import best_information_gain, information_gain
 from benchmark.engine.validator import filter_candidates, validate_guess
 from benchmark.prompts import build_prompt
-from benchmark.types import Condition, GameState, GuessEvaluation, GuessStatus, ModelAdapter, ModelResponse
+from benchmark.types import (
+    ActionStatus, Condition, GameMode, GameState, GuessEvaluation, ModelAdapter, ModelResponse,
+)
 
 
 @dataclass(frozen=True)
 class ProposalRecord:
+    game_mode: GameMode
     decision_round: int
     proposal_type: str
     raw_response: str
@@ -24,7 +27,8 @@ class ProposalRecord:
     prompt_hash: str
     candidate_count_before: int
     information_gain: tuple[float | None, ...]
-    ig_star: float
+    ig_oracle: float
+    ig_oracle_kind: str
     input_tokens: int | None
     output_tokens: int | None
     reasoning_tokens: int | None
@@ -34,25 +38,33 @@ class ProposalRecord:
     returned_model_id: str | None
     returned_provider: str | None
     provider_metadata: dict | None
-    accepted_guess: str | None = None
+    played: bool = False
+    played_guess: str | None = None
     feedback: tuple[str, ...] | None = None
     candidate_count_after: int | None = None
 
 
 @dataclass(frozen=True)
 class GameSummary:
+    game_mode: GameMode
     solved: bool
     solve_round: int | None
     round_score: int
-    accepted_guess_count: int
-    initial_invalid_count: int
+    played_guess_count: int
+    initial_action_invalid_count: int
+    initial_constraint_violation_count: int
+    initial_top3_constraint_violation_count: int
+    repair_top1_constraint_violation_count: int
+    all_suggestion_constraint_violation_count: int
     repair_attempt_count: int
     repair_success_count: int
     forfeit_count: int
     protocol_error_count: int
     format_error_count: int
     lexicon_error_count: int
-    constraint_error_count: int
+    constraint_consistent_played_guess_count: int
+    constraint_inconsistent_played_guess_count: int
+    repeat_played_guess_count: int
     input_tokens_total: int
     output_tokens_total: int
     reasoning_tokens_total: int
@@ -88,7 +100,8 @@ def _evaluate(
     if len({evaluation.normalized for evaluation in evaluations}) < 3:
         evaluations = tuple(
             GuessEvaluation(
-                evaluation.raw, evaluation.normalized, evaluation.status, evaluation.error_subcode,
+                evaluation.raw, evaluation.normalized, evaluation.action_status,
+                evaluation.error_subcode, evaluation.constraint_consistent,
                 evaluation.violated_constraint_ages,
                 evaluation.diagnostics + (("DUPLICATE_TOP3",) if "DUPLICATE_TOP3" not in evaluation.diagnostics else ()),
             )
@@ -101,11 +114,17 @@ def _record(
     response: ModelResponse, evaluations: tuple[GuessEvaluation, ...], prompt: str,
     proposal_type: str, decision_round: int, state: GameState,
     feasible: tuple[str, ...], input_price: float | None, output_price: float | None,
-    reasoning_price: float | None,
+    reasoning_price: float | None, game_mode: GameMode,
 ) -> ProposalRecord:
-    valid_legal = filter_candidates(state.legal_guesses, state.history)
+    oracle_guesses = (
+        state.legal_guesses if game_mode is GameMode.NORMAL
+        else filter_candidates(state.legal_guesses, state.history)
+    )
     gains = tuple(
-        information_gain(item.normalized, feasible) if item.valid else None for item in evaluations
+        information_gain(item.normalized, feasible)
+        if item.action_valid and (game_mode is GameMode.NORMAL or item.constraint_consistent)
+        else None
+        for item in evaluations
     )
     cost = None
     if None not in (input_price, output_price, reasoning_price) and (
@@ -119,9 +138,10 @@ def _record(
             + (response.reasoning_tokens or 0) * reasoning_price
         ) / 1_000_000
     return ProposalRecord(
-        decision_round, proposal_type, response.raw_text, evaluations, response.protocol_error,
+        game_mode, decision_round, proposal_type, response.raw_text, evaluations, response.protocol_error,
         hashlib.sha256(prompt.encode()).hexdigest(), len(feasible), gains,
-        best_information_gain(valid_legal, feasible),
+        best_information_gain(oracle_guesses, feasible),
+        "legal" if game_mode is GameMode.NORMAL else "strict",
         response.input_tokens, response.output_tokens, response.reasoning_tokens,
         response.latency_ms, cost, response.provider_request_id, response.model_returned,
         response.provider_returned,
@@ -131,11 +151,17 @@ def _record(
 
 async def run_game(
     adapter: ModelAdapter, condition: Condition, state: GameState, *,
+    game_mode: GameMode = GameMode.NORMAL,
     input_price_per_million: float | None = 0, output_price_per_million: float | None = 0,
     reasoning_price_per_million: float | None = 0,
 ) -> GameResult:
     proposals: list[ProposalRecord] = []
-    initial_invalid = repairs = repair_successes = forfeits = 0
+    initial_action_invalid = initial_constraint_violations = repairs = repair_successes = forfeits = 0
+
+    def playable(evaluation: GuessEvaluation | None) -> bool:
+        return bool(evaluation and evaluation.action_valid and (
+            game_mode is GameMode.NORMAL or evaluation.constraint_consistent
+        ))
 
     for decision_round in range(1, 7):
         feasible_before = filter_candidates(state.initial_secrets, state.history)
@@ -145,21 +171,27 @@ async def run_game(
         top1 = evaluations[0] if evaluations else None
         proposals.append(_record(response, evaluations, prompt, "initial", decision_round,
                                  state, feasible_before, input_price_per_million,
-                                 output_price_per_million, reasoning_price_per_million))
+                                 output_price_per_million, reasoning_price_per_million, game_mode))
 
-        if top1 is None or not top1.valid:
-            initial_invalid += 1
+        if top1 and top1.action_valid and not top1.constraint_consistent:
+            initial_constraint_violations += 1
+        if not playable(top1):
+            if top1 and not top1.action_valid:
+                initial_action_invalid += 1
             repairs += 1
             rejected = top1.raw if top1 else None
-            error: GuessStatus | str = top1.status if top1 else "PROTOCOL_ERROR"
+            error: ActionStatus | str = (
+                "CONSTRAINT_ERROR" if top1 and top1.action_valid else
+                top1.action_status if top1 else "PROTOCOL_ERROR"
+            )
             prompt = build_prompt(condition, state, decision_round, rejected, error)
             response = await adapter.predict(prompt)
             evaluations = _evaluate(response, state, condition, decision_round)
             top1 = evaluations[0] if evaluations else None
             proposals.append(_record(response, evaluations, prompt, "repair", decision_round,
                                      state, feasible_before, input_price_per_million,
-                                     output_price_per_million, reasoning_price_per_million))
-            if top1 is None or not top1.valid:
+                                     output_price_per_million, reasoning_price_per_million, game_mode))
+            if not playable(top1):
                 forfeits += 1
                 continue
             repair_successes += 1
@@ -169,7 +201,7 @@ async def run_game(
         state.accept(accepted, feedback, decision_round)
         feasible_after = filter_candidates(state.initial_secrets, state.history)
         proposals[-1] = replace(
-            proposals[-1], accepted_guess=accepted,
+            proposals[-1], played=True, played_guess=accepted,
             feedback=tuple(item.value for item in feedback), candidate_count_after=len(feasible_after),
         )
         if accepted == state.secret:
@@ -178,17 +210,30 @@ async def run_game(
     solved = state.solved
     solve_round = state.history[-1].decision_round if solved else None
     errors = Counter(
-        evaluation.status
+        evaluation.action_status
         for proposal in proposals
         for evaluation in proposal.evaluations
-        if not evaluation.valid
+        if not evaluation.action_valid
     )
+    initial = [proposal for proposal in proposals if proposal.proposal_type == "initial"]
+    all_evaluations = [evaluation for proposal in proposals for evaluation in proposal.evaluations]
+    played = [proposal.evaluations[0] for proposal in proposals if proposal.played]
     summary = GameSummary(
-        solved, solve_round, solve_round or 7, len(state.history), initial_invalid,
+        game_mode, solved, solve_round, solve_round or 7, len(state.history), initial_action_invalid,
+        initial_constraint_violations,
+        sum(not evaluation.constraint_consistent for proposal in initial for evaluation in proposal.evaluations
+            if evaluation.action_valid),
+        sum(bool(proposal.evaluations and proposal.evaluations[0].action_valid
+                 and not proposal.evaluations[0].constraint_consistent)
+            for proposal in proposals if proposal.proposal_type == "repair"),
+        sum(not evaluation.constraint_consistent for evaluation in all_evaluations
+            if evaluation.action_valid),
         repairs, repair_successes, forfeits,
         sum(proposal.protocol_error is not None for proposal in proposals),
-        errors[GuessStatus.FORMAT_ERROR], errors[GuessStatus.LEXICON_ERROR],
-        errors[GuessStatus.CONSTRAINT_ERROR],
+        errors[ActionStatus.FORMAT_ERROR], errors[ActionStatus.LEXICON_ERROR],
+        sum(evaluation.constraint_consistent is True for evaluation in played),
+        sum(evaluation.constraint_consistent is False for evaluation in played),
+        sum("REPEAT_ACCEPTED_GUESS" in evaluation.diagnostics for evaluation in played),
         sum(item.input_tokens or 0 for item in proposals),
         sum(item.output_tokens or 0 for item in proposals),
         sum(item.reasoning_tokens or 0 for item in proposals),

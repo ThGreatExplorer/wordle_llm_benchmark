@@ -11,6 +11,11 @@ class Condition(StrEnum):
     DYNAMIC_256 = "dynamic_256"
 
 
+class GameMode(StrEnum):
+    NORMAL = "normal"
+    STRICT = "strict"
+
+
 class Feedback(StrEnum):
     EXACT = "EXACT"
     PRESENT = "PRESENT"
@@ -20,10 +25,9 @@ class Feedback(StrEnum):
 FeedbackPattern = tuple[Feedback, Feedback, Feedback, Feedback, Feedback]
 
 
-class GuessStatus(StrEnum):
+class ActionStatus(StrEnum):
     FORMAT_ERROR = "FORMAT_ERROR"
     LEXICON_ERROR = "LEXICON_ERROR"
-    CONSTRAINT_ERROR = "CONSTRAINT_ERROR"
     VALID = "VALID"
 
 
@@ -42,14 +46,19 @@ class HistoryEntry:
 class GuessEvaluation:
     raw: str
     normalized: str
-    status: GuessStatus
+    action_status: ActionStatus
     error_subcode: str | None = None
+    constraint_consistent: bool | None = None
     violated_constraint_ages: tuple[int, ...] = ()
     diagnostics: tuple[str, ...] = ()
 
     @property
-    def valid(self) -> bool:
-        return self.status is GuessStatus.VALID
+    def action_valid(self) -> bool:
+        return self.action_status is ActionStatus.VALID
+
+    @property
+    def strict_valid(self) -> bool:
+        return self.action_valid and self.constraint_consistent is True
 
 
 @dataclass(frozen=True)

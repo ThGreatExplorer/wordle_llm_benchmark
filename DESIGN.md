@@ -1,6 +1,6 @@
 # Wordle LLM Benchmark: MVP Design Specification
 
-**Status:** Frozen MVP v3 design for implementation
+**Status:** Frozen MVP v4 design for implementation
 **Audience:** Codex / software engineer implementing the benchmark
 **Primary language:** Python 3.11+
 **Purpose:** Build a reproducible benchmark for multi-turn lexical constraint reasoning across six language models.
@@ -17,6 +17,15 @@ The benchmark studies whether models can:
 2. choose strategically informative guesses;
 3. rank good candidates correctly among their top three suggestions; and
 4. repair invalid outputs after a single verifier rejection.
+
+The mode dimension separates two related research questions. NORMAL asks whether
+the model can solve the game and choose informative legal actions while measuring
+constraint adherence as a diagnostic. It permits recovery through new feedback
+after a constraint mistake. STRICT asks whether the model can solve while
+maintaining exact cumulative constraints, producing only admissible actions, and
+repairing verifier-rejected proposals. Both use identical prompts, instances,
+scoring, and constraint diagnostics; the mode is evaluator policy and is never
+revealed as strategic assistance.
 
 This project is an evaluation harness first. Fine-tuning is explicitly optional and out of scope for the MVP.
 
@@ -61,7 +70,8 @@ All Qwen tracks MUST run through the dedicated stateless Hugging Face Inference 
 
 ## 4. Frozen experimental matrix
 
-There are three conditions and 150 evaluation instances per condition per model.
+Condition and constraint-enforcement mode are separate dimensions. There are three
+conditions and 150 frozen evaluation instances per condition per model.
 
 | Condition | Task name exposed? | Secret universe | Legal guess universe | Instance count |
 |---|---|---|---|---:|
@@ -69,9 +79,14 @@ There are three conditions and 150 evaluation instances per condition per model.
 | `hist_unnamed` | No | Same as `hist_named` | Same as `hist_named` | 150 |
 | `dynamic_256` | No | Per-instance 256-word pool | Exactly the same per-instance 256 words | 150 |
 
-Total games:
+The primary NORMAL experiment contains:
 
 `6 models * 3 conditions * 150 instances = 2700 games`
+
+The harness also supports STRICT mode over the same instances. STRICT is an
+additional constraint-enforced evaluation and is not automatically part of the
+2,700-game primary matrix. A later study may intentionally run both modes over
+the full matrix.
 
 A game has at most **6 decision rounds**.
 
@@ -181,7 +196,7 @@ Example:
 
 ```json
 {
-  "benchmark_version": "mvp-v3",
+  "benchmark_version": "mvp-v4",
   "game_id": "hist_0042",
   "secret": "crane"
 }
@@ -195,7 +210,7 @@ Example:
 
 ```json
 {
-  "benchmark_version": "mvp-v3",
+  "benchmark_version": "mvp-v4",
   "game_id": "dynamic_0042",
   "pool_seed": 82910422,
   "secret_seed": 19328501,
@@ -258,9 +273,19 @@ This function must be heavily unit-tested, especially with repeated letters in t
 
 ---
 
-## 9. Strict hard-mode constraint semantics
+## 9. Constraint consistency and execution modes
 
-This benchmark is about constraint satisfaction. Every **accepted** played guess after prior feedback must be fully consistent with all previous feedback, not merely satisfy a subset of official UI hard-mode rules.
+The benchmark supports two execution modes while using one shared deterministic
+constraint checker.
+
+- `normal`: every structurally and lexically legal top-1 is played. Constraint
+  inconsistency is recorded but does not trigger repair or suppress feedback.
+- `strict`: cumulative constraint consistency is enforced before play. An
+  inconsistent top-1 triggers the one-repair protocol; a failed repair forfeits
+  the decision round.
+
+NORMAL is the primary general Wordle-solving evaluation. STRICT is an additional,
+scientifically meaningful constraint-enforced evaluation; it is not deprecated.
 
 Given history:
 
@@ -294,7 +319,13 @@ For dynamic mode:
 - `S_0` = the current instance's 256-word pool;
 - lexical guess universe = the same 256-word pool.
 
-A historical legal guess may be a non-answer word, but it still must be fully consistent with all prior feedback to be accepted.
+A historical legal guess may be a non-answer word. In NORMAL it may be played even
+when inconsistent; in STRICT it must be fully consistent to be played.
+
+Internally, action validity and constraint consistency are independent. Action
+validity requires five ASCII alphabetic letters and membership in the applicable
+legal-guess universe. Every action-valid suggestion is separately replayed against
+all prior played rows to compute constraint consistency and violated clue ages.
 
 ---
 
@@ -456,7 +487,13 @@ Only guess #1 is eligible to be played. Do not automatically promote guess #2 or
 
 ### 12.2 One repair attempt
 
-If the first-ranked guess is invalid:
+Repair triggers are mode-dependent. In NORMAL, repair occurs only for a response
+protocol error or an action-invalid top-1 (`FORMAT_ERROR`, `LEXICON_ERROR`, or
+dynamic `OUTSIDE_DYNAMIC_POOL`). An action-valid constraint violation is played
+immediately. In STRICT, those same errors plus constraint inconsistency
+(`CONSTRAINT_ERROR` at the execution gate) trigger repair.
+
+When repair is triggered:
 
 1. record the initial error;
 2. make exactly one fresh repair request;
@@ -475,9 +512,12 @@ Re-evaluate the complete game state and return exactly three new ranked guesses 
 
 Do not reveal which exact clue was violated.
 
-If repaired guess #1 is valid, play it.
+If repaired guess #1 satisfies the selected mode's play gate, play it. Thus NORMAL
+requires action validity; STRICT requires action validity and consistency.
 
-If repaired guess #1 is still invalid, the decision round is forfeited and no guess is played/no new feedback is generated. Move to the next decision round with the same accepted game history.
+If repaired guess #1 still fails the selected mode's gate, the decision round is
+forfeited and no guess is played/no new feedback is generated. Move to the next
+decision round with the same played game history.
 
 A failed repair therefore consumes one of the six decision rounds.
 
@@ -490,7 +530,16 @@ A failed repair therefore consumes one of the six decision rounds.
 
 ## 13. Validation and error taxonomy
 
-Keep action-invalidating error classes mutually exclusive using a fixed precedence.
+Validation produces two independent values:
+
+```text
+action_status = VALID | FORMAT_ERROR | LEXICON_ERROR
+constraint_consistent = true | false | null
+```
+
+`constraint_consistent` is null for action-invalid strings and boolean for every
+action-valid guess. `violated_constraint_ages` and repeat/duplicate diagnostics are
+recorded independently.
 
 ### Response-level error
 
@@ -506,9 +555,12 @@ For each extracted guess, validate in this order:
    - not exactly five ASCII alphabetic letters after only minimal normalization such as trimming whitespace/lowercasing;
 2. `LEXICON_ERROR`
    - format-valid but not in the condition's lexical guess universe;
-3. `CONSTRAINT_ERROR`
-   - format- and lexicon-valid but inconsistent with one or more prior accepted feedback constraints;
-4. `VALID`.
+3. `VALID`, followed by deterministic constraint replay.
+
+Constraint inconsistency exists as a diagnostic in both modes. In STRICT it is
+also surfaced as `CONSTRAINT_ERROR` to the repair prompt and blocks play. In NORMAL
+it is logged as `constraint_consistent=false`/constraint violation and does not
+make the action invalid.
 
 For dynamic mode, add diagnostic subcode `OUTSIDE_DYNAMIC_POOL` to `LEXICON_ERROR`.
 
@@ -516,15 +568,16 @@ Do not assign arbitrary numeric severity weights to these errors.
 
 Their natural consequences are sufficient:
 
-- invalid first proposal triggers repair;
-- invalid repair forfeits a decision round;
+- an action-invalid first proposal triggers repair in both modes;
+- constraint inconsistency additionally triggers repair in STRICT;
+- a repair that still fails the selected mode's gate forfeits a decision round;
 - repeated failures reduce solve rate and increase round score.
 
 ### Non-invalidating diagnostics
 
 The following may be logged but must not reject a guess:
 
-- `REPEAT_ACCEPTED_GUESS`: proposal repeats an earlier accepted guess but is otherwise legal/consistent;
+- `REPEAT_ACCEPTED_GUESS`: proposal repeats an earlier played guess;
 - `DUPLICATE_TOP3`: two or more of the three suggestions are identical.
 
 ---
@@ -644,7 +697,7 @@ The runner should operate at the game level with bounded concurrency. Rounds wit
 Conceptual flow:
 
 ```python
-async def run_game(model, condition, instance):
+async def run_game(model, condition, instance, game_mode):
     state = fresh_state(instance)
 
     for decision_round in range(1, 7):
@@ -653,7 +706,9 @@ async def run_game(model, condition, instance):
         initial_eval = evaluate_top3(initial, state, condition)
         log_proposal(...)
 
-        if initial_eval.top1_valid:
+        if initial_eval.top1_action_valid and (
+            game_mode == NORMAL or initial_eval.top1_constraint_consistent
+        ):
             chosen = initial_eval.top1
         else:
             repair_prompt = build_repair_prompt(
@@ -667,7 +722,9 @@ async def run_game(model, condition, instance):
             repair_eval = evaluate_top3(repair, state, condition)
             log_proposal(...)
 
-            if not repair_eval.top1_valid:
+            if not repair_eval.top1_action_valid or (
+                game_mode == STRICT and not repair_eval.top1_constraint_consistent
+            ):
                 log_forfeit(...)
                 continue
 
@@ -692,7 +749,9 @@ Support a configurable concurrency limit, for example:
 
 Do not parallelize rounds within a single game.
 
-Support resumability: if a run is interrupted, already completed game/model/condition keys should not be recomputed unless explicitly requested.
+Support resumability: if a run is interrupted, already completed
+game/model/condition/mode keys should not be recomputed unless explicitly
+requested. Frozen run metadata includes `game_mode`; resume rejects a changed mode.
 
 ---
 
@@ -700,7 +759,9 @@ Support resumability: if a run is interrupted, already completed game/model/cond
 
 Information gain is computed deterministically from the current feasible secret set.
 
-Let current feasible secrets be `S_t` and let `g` be a valid hard-mode guess. Partition `S_t` by the feedback pattern that would result from guessing `g`.
+Let current feasible secrets be `S_t` and let `g` be a guess in the selected
+mode's permitted action space. Partition `S_t` by the feedback pattern that would
+result from guessing `g`.
 
 Under the benchmark's uniform prior over `S_t`:
 
@@ -724,17 +785,20 @@ IG(g) = H(S_t) - expected_posterior_entropy
 
 Equivalent implementations based on feedback-pattern entropy are acceptable if numerically identical.
 
-### Oracle legal-guess set
+### Mode-specific oracle legal-guess set
 
-When finding `IG*`, only compare against guesses that are currently valid under the benchmark's strict hard-mode rule.
+NORMAL uses `IG*_legal`, maximized over the complete action-valid legal-guess
+universe: the full frozen historical legal vocabulary or all 256 dynamic words.
+An inconsistent legal guess has a normal information-gain value.
 
-- Historical: all original legal Wordle guesses that are constraint-consistent.
-- Dynamic: all words in the current 256 pool that are constraint-consistent.
+STRICT uses `IG*_strict`, maximized only over action-valid, currently
+constraint-consistent legal guesses. A constraint-inconsistent proposal is not a
+played action in STRICT, so its played-action IG is missing.
 
 Define:
 
 ```text
-IG_star = max_g IG(g)
+IG*_mode = max_g IG(g)
 ```
 
 Cache aggressively. A precomputed feedback-pattern matrix for the historical answer/guess lexicons is acceptable and recommended if needed for performance.
@@ -764,19 +828,24 @@ Report the mean across all 150 games. This is the primary efficiency metric beca
 
 Also report mean accepted guesses among wins as a descriptive secondary statistic, but do not use it as the main efficiency measure.
 
-### 18.2 Constraint fidelity
+### 18.2 Action and constraint fidelity
 
-#### Initial Valid@1
+#### Initial Action Valid@1 / @3
 
-Fraction of **initial** first-ranked proposals that are `VALID`.
+Action-valid initial top-1 proposals divided by all initial proposals; and
+action-valid initial suggestions divided by all three initial slots.
 
 Repairs are excluded from this metric because it measures autonomous constraint maintenance before verifier intervention.
 
-#### Initial Valid@3
+#### Initial Constraint Consistent@1 / @3
 
-Across initial top-three outputs, fraction of suggestions that are individually `VALID`.
+Constraint-consistent initial guesses divided by action-valid initial guesses, at
+top-1 and across top-three respectively.
 
-This measures whether the model's broader proposed candidate set respects the state, even if its top-ranked action happens to be valid.
+#### Initial Strict Valid@1 / @3
+
+`action_valid AND constraint_consistent`, divided by all initial proposals/slots.
+These retain approximate comparability with pre-v4 `Valid@1`/`Valid@3`.
 
 ### 18.3 Constraint-memory depth
 
@@ -800,24 +869,27 @@ This metric answers whether constraint failures increase as information becomes 
 
 ### 18.4 Strategic quality from top three
 
-Compute information gain for each valid suggested guess.
+Compute information gain for suggestions permitted by the selected mode and use
+that mode's explicitly named oracle.
 
 #### Top-1 normalized information efficiency
 
 When `IG_star > 0`:
 
 ```text
-IG_efficiency = IG(g1) / IG_star
+IG_efficiency = IG(g1) / IG*_mode
 ```
 
-If top-1 is invalid, store the strategic value as missing for the valid-guess strategic analysis and separately account for the constraint failure. Do not invent an information score for an impossible action.
+In NORMAL this is available for every action-valid played top-1, including a
+constraint violation. In STRICT it is available only for played strict-valid
+top-1 actions.
 
 #### Search regret
 
 Among valid suggestions in the top three:
 
 ```text
-search_regret = IG_star - max(IG(valid top3 suggestions))
+search_regret_mode = IG*_mode - max(IG(mode-permitted top3 suggestions))
 ```
 
 If none of the top three are valid, this value is missing and the state is already captured by constraint-fidelity metrics.
@@ -829,7 +901,7 @@ This measures failure to generate a strategically strong candidate anywhere in t
 If top-1 is valid and at least one top-three suggestion is valid:
 
 ```text
-ranking_regret = max(IG(valid top3 suggestions)) - IG(g1)
+ranking_regret_mode = max(IG(mode-permitted top3 suggestions)) - IG(g1)
 ```
 
 This measures whether the model generated a better option but ranked it below its chosen action.
@@ -839,7 +911,7 @@ This measures whether the model generated a better option but ranked it below it
 When top-1 is valid:
 
 ```text
-total_regret = IG_star - IG(g1)
+total_regret_mode = IG*_mode - IG(g1)
 ```
 
 For valid top-1 states:
@@ -855,7 +927,7 @@ assuming the same validity handling and definitions above.
 #### RepairSuccess
 
 ```text
-P(repaired top1 is valid | initial top1 was invalid)
+P(repaired top1 passes selected mode's play gate | repair attempted)
 ```
 
 Report overall and stratified by initial error class:
@@ -863,7 +935,7 @@ Report overall and stratified by initial error class:
 - protocol;
 - format;
 - lexicon;
-- constraint.
+- constraint (STRICT only).
 
 #### ForfeitRate
 
@@ -903,8 +975,9 @@ For each model and condition, report at minimum:
 
 - Solve@6;
 - mean decision-round score;
-- Initial Valid@1;
-- Initial Valid@3;
+- Initial Action Valid@1/@3;
+- Initial Constraint Consistent@1/@3;
+- Initial Strict Valid@1/@3;
 - normalized IG efficiency;
 - search regret;
 - ranking regret;
@@ -930,7 +1003,7 @@ For each model calculate paired deltas in:
 
 - Solve@6;
 - round score;
-- Initial Valid@1;
+- Initial Action Valid@1 and Initial Strict Valid@1;
 - IG efficiency;
 - repair behavior if sample size permits.
 
@@ -952,7 +1025,7 @@ Compare saturation/degradation using:
 
 - Solve@6;
 - round score;
-- Valid@1;
+- Action Valid@1 and Strict Valid@1;
 - IG efficiency;
 - constraint-memory behavior.
 
@@ -995,6 +1068,7 @@ benchmark_version
 prompt_version
 game_id
 condition
+game_mode
 model_key
 provider
 requested_model_id
@@ -1007,12 +1081,12 @@ guess_1
 guess_2
 guess_3
 
-valid_1
-valid_2
-valid_3
-error_1
-error_2
-error_3
+action_status_1
+action_status_2
+action_status_3
+constraint_consistent_1
+constraint_consistent_2
+constraint_consistent_3
 error_subcode_1
 error_subcode_2
 error_subcode_3
@@ -1025,13 +1099,15 @@ candidate_count_before
 ig_1
 ig_2
 ig_3
-ig_star
+ig_oracle
+ig_oracle_kind            # legal | strict
 ig_efficiency_top1
 search_regret
 ranking_regret
 total_regret
 
-accepted_guess
+played
+played_guess
 feedback
 candidate_count_after
 
@@ -1058,19 +1134,25 @@ At minimum:
 run_id
 game_id
 condition
+game_mode
 model_key
 solved
 solve_round
 round_score              # solve_round or 7
-accepted_guess_count
-initial_invalid_count
+played_guess_count
+initial_action_invalid_count
+initial_constraint_violation_count
+initial_top3_constraint_violation_count
+repair_top1_constraint_violation_count
+all_suggestion_constraint_violation_count
 repair_attempt_count
 repair_success_count
 forfeit_count
 protocol_error_count
 format_error_count
 lexicon_error_count
-constraint_error_count
+constraint_consistent_played_guess_count
+constraint_inconsistent_played_guess_count
 input_tokens_total
 output_tokens_total
 reasoning_tokens_total
@@ -1115,12 +1197,14 @@ python -m benchmark generate-manifests --config configs/benchmark.yaml
 python -m benchmark run \
   --model gpt4o \
   --condition hist_unnamed \
+  --mode normal \
   --split dev
 
 # Run one model on evaluation data
 python -m benchmark run \
   --model qwen3_8b \
   --condition dynamic_256 \
+  --mode strict \
   --split eval \
   --concurrency 8
 
@@ -1137,7 +1221,7 @@ python -m benchmark analyze --run-id <RUN>
 Implement `--resume` safely using a unique key such as:
 
 ```text
-(run_id, model_key, condition, game_id)
+(run_id, model_key, condition, game_mode, game_id)
 ```
 
 A resumed run must not duplicate completed games.
@@ -1387,7 +1471,8 @@ Implement in this order so external API cost is incurred only after deterministi
 - aggregate primary/secondary metrics;
 - bootstrap confidence intervals;
 - export CSV/Parquet summary tables;
-- basic plots for Solve@6, round score, Valid@1, IG efficiency, repair success, and constraint age.
+- basic plots for Solve@6, round score, Action Valid@1, Constraint Consistent@1,
+  Strict Valid@1, IG efficiency, repair success, and constraint age.
 
 Do not implement fine-tuning before these milestones work.
 

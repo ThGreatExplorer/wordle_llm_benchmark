@@ -96,11 +96,12 @@ Important invariants include:
 - Each dynamic pool has exactly 256 unique five-letter words.
 - In `dynamic_256`, the candidate pool is also the complete legal-guess universe.
 - Each game has at most six decision rounds.
-- The game uses strict Wordle-hard-mode-style constraint satisfaction.
+- The harness supports explicit `normal` and `strict` constraint modes. Both
+  measure exact replay consistency; only `strict` blocks inconsistent legal actions.
 - Every normal LLM turn is reconstructed from rules + complete accepted public history.
 - Provider conversation/session state must not persist between turns or games.
 - Previous top-2/top-3 suggestions are measurements and must not be inserted into later normal-turn prompts.
-- An invalid top-1 guess receives exactly one repair attempt.
+- A top-1 that fails the selected mode's play gate receives exactly one repair attempt.
 - A failed repair forfeits that decision round.
 - Do not automatically promote guess #2 or #3 when guess #1 is invalid.
 - The local deterministic engine is authoritative for scoring, validity, candidate filtering, and information gain.
@@ -172,8 +173,8 @@ Implement:
 
 - Solve@6;
 - mean decision-round score with failures scored as 7;
-- Valid@1;
-- Valid@3;
+- Action Valid@1/@3;
+- Constraint Consistent@1/@3 and Strict Valid@1/@3;
 - information efficiency;
 - search regret;
 - ranking regret;
@@ -307,12 +308,15 @@ This avoids maintaining a separate, potentially inconsistent hand-written rule s
 
 ## Validation rules
 
-For every generated candidate string, classify using the precedence in `DESIGN.md`:
+For every generated candidate string, classify action validity using the precedence in `DESIGN.md`:
 
 1. `FORMAT_ERROR`
 2. `LEXICON_ERROR`
-3. `CONSTRAINT_ERROR`
-4. `VALID`
+3. `VALID`
+
+For every action-valid guess, independently record exact replay consistency and
+violated clue ages. In `strict`, inconsistency is exposed as `CONSTRAINT_ERROR` to
+the repair protocol; in `normal`, it is played and logged as a constraint violation.
 
 Record all top-three guesses independently.
 
@@ -437,7 +441,7 @@ Every proposal should be logged with enough information to reproduce downstream 
 
 Every completed game should have exactly one game-summary record.
 
-Runs must be resumable without duplicating completed model × condition × game combinations.
+Runs must be resumable without duplicating completed model × condition × mode × game combinations.
 
 Prefer append-safe intermediate output and an explicit finalization/aggregation step.
 
@@ -528,17 +532,19 @@ The exact command organization may evolve, but the MVP should support workflows 
 uv run python -m benchmark generate-manifests --config configs/benchmark.yaml
 
 # Run a development slice against the mock provider.
-uv run python -m benchmark run \
+uv run python -m benchmark run-mock \
   --config configs/benchmark.yaml \
-  --models mock \
-  --mode dynamic_256 \
-  --split dev
+  --condition dynamic_256 \
+  --mode normal \
+  --run-id mock-dynamic-normal
 
 # Run a configured model against one condition.
 uv run python -m benchmark run \
   --config configs/benchmark.yaml \
-  --models gpt-4o \
-  --mode hist_named \
+  --model gpt4o \
+  --condition hist_named \
+  --mode normal \
+  --run-id gpt4o-hist-named-normal-dev \
   --split dev
 
 # Aggregate/analyze completed runs.

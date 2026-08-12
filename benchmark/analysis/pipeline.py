@@ -14,9 +14,12 @@ from benchmark.analysis.bootstrap import confidence_interval
 from benchmark.analysis.dashboard import write_dashboard
 
 METRICS = (
-    "solve_at_6", "mean_round_score", "initial_valid_at_1", "initial_valid_at_3",
-    "ig_efficiency", "search_regret", "ranking_regret", "repair_success_rate",
-    "forfeit_rate",
+    "solve_at_6", "mean_round_score", "played_guesses_per_game",
+    "initial_action_valid_at_1", "initial_action_valid_at_3",
+    "constraint_consistent_at_1", "constraint_consistent_at_3",
+    "strict_valid_at_1", "strict_valid_at_3", "ig_efficiency", "search_regret",
+    "ranking_regret", "total_regret", "repair_success_rate", "forfeits_per_game",
+    "forfeit_rate", "repeat_rate",
 )
 
 
@@ -31,29 +34,51 @@ def _mean(values: list[float]) -> float | None:
 def _proposal_metrics(rows: list[dict[str, Any]]) -> dict[str, float | None]:
     initial = [row for row in rows if row["proposal_type"] == "initial"]
     evaluations = [evaluation for row in initial for evaluation in row["evaluations"]]
-    efficiencies, search, ranking = [], [], []
+    top1 = [row["evaluations"][0] if row["evaluations"] else None for row in initial]
+    action_evaluations = [item for item in evaluations if item["action_status"] == "VALID"]
+    efficiencies, search, ranking, total = [], [], [], []
     for row in initial:
         gains = row["information_gain"]
         valid_gains = [gain for gain in gains if gain is not None]
         if valid_gains:
-            search.append(row["ig_star"] - max(valid_gains))
+            search.append(row["ig_oracle"] - max(valid_gains))
         if gains and gains[0] is not None:
-            if row["ig_star"] > 0:
-                efficiencies.append(gains[0] / row["ig_star"])
+            if row["ig_oracle"] > 0:
+                efficiencies.append(gains[0] / row["ig_oracle"])
             if valid_gains:
                 ranking.append(max(valid_gains) - gains[0])
+            total.append(row["ig_oracle"] - gains[0])
     return {
-        "initial_valid_at_1": (
-            sum(bool(row["evaluations"] and row["evaluations"][0]["status"] == "VALID") for row in initial)
-            / len(initial) if initial else None
-        ),
-        "initial_valid_at_3": (
-            sum(item["status"] == "VALID" for item in evaluations) / (3 * len(initial))
+        "initial_action_valid_at_1": (
+            sum(bool(item and item["action_status"] == "VALID") for item in top1) / len(initial)
             if initial else None
+        ),
+        "initial_action_valid_at_3": (
+            len(action_evaluations) / (3 * len(initial))
+            if initial else None
+        ),
+        "constraint_consistent_at_1": _mean([
+            float(item["constraint_consistent"]) for item in top1
+            if item and item["action_status"] == "VALID"
+        ]),
+        "constraint_consistent_at_3": _mean([
+            float(item["constraint_consistent"]) for item in action_evaluations
+        ]),
+        "strict_valid_at_1": (
+            sum(bool(item and item["action_status"] == "VALID" and item["constraint_consistent"])
+                for item in top1) / len(initial) if initial else None
+        ),
+        "strict_valid_at_3": (
+            sum(bool(item["constraint_consistent"]) for item in action_evaluations)
+            / (3 * len(initial)) if initial else None
         ),
         "ig_efficiency": _mean(efficiencies),
         "search_regret": _mean(search),
         "ranking_regret": _mean(ranking),
+        "total_regret": _mean(total),
+        "repeat_rate": _mean([
+            float("REPEAT_ACCEPTED_GUESS" in item["diagnostics"]) for item in action_evaluations
+        ]),
     }
 
 
@@ -67,6 +92,7 @@ def aggregate(summaries: list[dict[str, Any]], proposals: list[dict[str, Any]]) 
         "games": len(summaries),
         "solve_at_6": _mean([row["solved"] for row in summaries]),
         "mean_round_score": _mean([row["round_score"] for row in summaries]),
+        "played_guesses_per_game": _mean([row["played_guess_count"] for row in summaries]),
         **proposal_metrics,
         "repair_success_rate": (
             sum(row["repair_success_count"] for row in summaries)
@@ -74,6 +100,7 @@ def aggregate(summaries: list[dict[str, Any]], proposals: list[dict[str, Any]]) 
             if sum(row["repair_attempt_count"] for row in summaries) else None
         ),
         "forfeit_rate": sum(row["forfeit_count"] for row in summaries) / rounds if rounds else None,
+        "forfeits_per_game": _mean([row["forfeit_count"] for row in summaries]),
     }
 
 
@@ -86,9 +113,6 @@ def _sample_metric(items: list[tuple[dict[str, Any], list[dict[str, Any]]]], met
         [summary for summary, _ in items],
         [proposal for _, proposals in items for proposal in proposals],
     )
-    if metric == "forfeit_rate":
-        rounds = sum(max((row["decision_round"] for row in proposals), default=0) for _, proposals in items)
-        return sum(summary["forfeit_count"] for summary, _ in items) / rounds if rounds else None
     return result[metric]
 
 
@@ -102,7 +126,7 @@ def _write_table(rows: list[dict[str, Any]], stem: Path, columns: list[str]) -> 
 
 
 def _svg(rows: list[dict[str, Any]], metric: str, path: Path) -> None:
-    values = [(f'{row["model_key"]} {row["condition"]}', row[metric]) for row in rows if row[metric] is not None]
+    values = [(f'{row["model_key"]} {row["condition"]} {row["game_mode"]}', row[metric]) for row in rows if row[metric] is not None]
     width, height = 900, max(180, 60 + 28 * len(values))
     maximum = max((abs(value) for _, value in values), default=1) or 1
     bars = []
@@ -121,21 +145,26 @@ def analyze_results(results: Path, output: Path, *, resamples: int = 10_000, see
     summaries = _read(sorted(results.rglob("summaries.jsonl")))
     if not summaries:
         raise ValueError(f"no completed game summaries found under {results}")
-    keys = [(row["model_key"], row["condition"], row["game_id"]) for row in summaries]
+    if any("game_mode" not in row for row in summaries + proposals) or any(
+        "action_status" not in evaluation for row in proposals for evaluation in row.get("evaluations", [])
+    ):
+        raise ValueError("results use the pre-mode schema; analyze them with the matching benchmark version")
+    keys = [(row["model_key"], row["condition"], row["game_mode"], row["game_id"]) for row in summaries]
     if len(keys) != len(set(keys)):
         raise ValueError("duplicate completed model/condition/game records")
 
-    proposal_groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-    summary_groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    proposal_groups: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    summary_groups: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in proposals:
-        proposal_groups[row["model_key"], row["condition"]].append(row)
+        proposal_groups[row["model_key"], row["condition"], row["game_mode"]].append(row)
     for row in summaries:
-        summary_groups[row["model_key"], row["condition"]].append(row)
+        summary_groups[row["model_key"], row["condition"], row["game_mode"]].append(row)
 
     metric_rows = []
     for key in sorted(summary_groups):
         group_summaries, group_proposals = summary_groups[key], proposal_groups[key]
-        row = {"model_key": key[0], "condition": key[1], **aggregate(group_summaries, group_proposals)}
+        row = {"model_key": key[0], "condition": key[1], "game_mode": key[2],
+               **aggregate(group_summaries, group_proposals)}
         by_game = {summary["game_id"]: summary for summary in group_summaries}
         game_proposals = defaultdict(list)
         for proposal in group_proposals:
@@ -149,56 +178,75 @@ def analyze_results(results: Path, output: Path, *, resamples: int = 10_000, see
             row[f"{metric}_ci_low"], row[f"{metric}_ci_high"] = low, high
         metric_rows.append(row)
 
-    age_counts: dict[tuple[str, str, int], list[int]] = defaultdict(lambda: [0, 0])
-    accepted_rounds: dict[tuple[str, str, str], set[int]] = defaultdict(set)
+    age_counts: dict[tuple[str, str, str, int], list[int]] = defaultdict(lambda: [0, 0])
+    played_rounds: dict[tuple[str, str, str, str], set[int]] = defaultdict(set)
     for row in proposals:
-        if row.get("accepted_guess"):
-            accepted_rounds[row["model_key"], row["condition"], row["game_id"]].add(row["decision_round"])
+        if row.get("played"):
+            played_rounds[row["model_key"], row["condition"], row["game_mode"], row["game_id"]].add(row["decision_round"])
     for row in proposals:
         if row["proposal_type"] != "initial":
             continue
         for evaluation in row["evaluations"]:
-            if evaluation["status"] in {"FORMAT_ERROR", "LEXICON_ERROR"}:
+            if evaluation["action_status"] != "VALID":
                 continue
             ages = {
-                row["decision_round"] - accepted_round
-                for accepted_round in accepted_rounds[row["model_key"], row["condition"], row["game_id"]]
-                if accepted_round < row["decision_round"]
+                row["decision_round"] - played_round
+                for played_round in played_rounds[row["model_key"], row["condition"], row["game_mode"], row["game_id"]]
+                if played_round < row["decision_round"]
             }
             for age in ages:
-                age_counts[row["model_key"], row["condition"], age][1] += 1
+                age_counts[row["model_key"], row["condition"], row["game_mode"], age][1] += 1
             for age in set(evaluation["violated_constraint_ages"]):
-                age_counts[row["model_key"], row["condition"], age][0] += 1
+                age_counts[row["model_key"], row["condition"], row["game_mode"], age][0] += 1
     age_rows = [{
-        "model_key": key[0], "condition": key[1], "clue_age": key[2],
+        "model_key": key[0], "condition": key[1], "game_mode": key[2], "clue_age": key[3],
         "violations": counts[0], "exposures": counts[1],
         "violation_rate": counts[0] / counts[1] if counts[1] else None,
     } for key, counts in sorted(age_counts.items())]
 
+    round_counts: dict[tuple[str, str, str, int], list[int]] = defaultdict(lambda: [0, 0])
+    for row in proposals:
+        if row["proposal_type"] != "initial":
+            continue
+        key = row["model_key"], row["condition"], row["game_mode"], row["decision_round"]
+        for evaluation in row["evaluations"]:
+            if evaluation["action_status"] == "VALID":
+                round_counts[key][1] += 1
+                round_counts[key][0] += bool(evaluation["constraint_consistent"])
+    round_rows = [{
+        "model_key": key[0], "condition": key[1], "game_mode": key[2],
+        "decision_round": key[3], "consistent": counts[0], "action_valid": counts[1],
+        "consistency_rate": counts[0] / counts[1] if counts[1] else None,
+    } for key, counts in sorted(round_counts.items())]
+
     contrasts = []
-    for model in sorted({key[0] for key in summary_groups}):
-        named = {row["game_id"]: row for row in summary_groups.get((model, "hist_named"), [])}
-        unnamed = {row["game_id"]: row for row in summary_groups.get((model, "hist_unnamed"), [])}
+    for model, mode in sorted({(key[0], key[2]) for key in summary_groups}):
+        named = {row["game_id"]: row for row in summary_groups.get((model, "hist_named", mode), [])}
+        unnamed = {row["game_id"]: row for row in summary_groups.get((model, "hist_unnamed", mode), [])}
         ids = sorted(named.keys() & unnamed.keys())
         if not ids:
             continue
         for offset, metric in enumerate(METRICS):
             pairs = []
             for game_id in ids:
-                left = _game_metric(named[game_id], [p for p in proposal_groups[model, "hist_named"] if p["game_id"] == game_id], metric)
-                right = _game_metric(unnamed[game_id], [p for p in proposal_groups[model, "hist_unnamed"] if p["game_id"] == game_id], metric)
+                left = _game_metric(named[game_id], [p for p in proposal_groups[model, "hist_named", mode] if p["game_id"] == game_id], metric)
+                right = _game_metric(unnamed[game_id], [p for p in proposal_groups[model, "hist_unnamed", mode] if p["game_id"] == game_id], metric)
                 if left is not None and right is not None:
                     pairs.append((left, right))
             delta = _mean([left - right for left, right in pairs])
             low, high = confidence_interval(pairs, lambda sample: _mean([a - b for a, b in sample]), resamples=resamples, seed=seed + offset)
-            contrasts.append({"model_key": model, "contrast": "hist_named-hist_unnamed", "metric": metric,
+            contrasts.append({"model_key": model, "game_mode": mode,
+                              "contrast": "hist_named-hist_unnamed", "metric": metric,
                               "pairs": len(pairs), "delta": delta, "ci_low": low, "ci_high": high})
 
     output.mkdir(parents=True, exist_ok=True)
     _write_table(metric_rows, output / "metrics", list(metric_rows[0]))
-    _write_table(age_rows, output / "constraint_age", ["model_key", "condition", "clue_age", "violations", "exposures", "violation_rate"])
-    _write_table(contrasts, output / "paired_contrasts", ["model_key", "contrast", "metric", "pairs", "delta", "ci_low", "ci_high"])
-    for metric in ("solve_at_6", "mean_round_score", "initial_valid_at_1", "ig_efficiency", "repair_success_rate"):
+    _write_table(age_rows, output / "constraint_age", ["model_key", "condition", "game_mode", "clue_age", "violations", "exposures", "violation_rate"])
+    _write_table(round_rows, output / "consistency_by_round", ["model_key", "condition", "game_mode", "decision_round", "consistent", "action_valid", "consistency_rate"])
+    _write_table(contrasts, output / "paired_contrasts", ["model_key", "game_mode", "contrast", "metric", "pairs", "delta", "ci_low", "ci_high"])
+    for metric in ("solve_at_6", "mean_round_score", "initial_action_valid_at_1",
+                   "constraint_consistent_at_1", "strict_valid_at_1", "ig_efficiency",
+                   "repair_success_rate"):
         _svg(metric_rows, metric, output / f"{metric}.svg")
     _svg(age_rows, "violation_rate", output / "constraint_age.svg")
     write_dashboard(metric_rows, age_rows, contrasts, output / "dashboard.html")

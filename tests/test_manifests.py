@@ -35,13 +35,13 @@ def test_frozen_manifest_shapes() -> None:
     historical = [json.loads(line) for line in (root / "eval_historical.jsonl").read_text().splitlines()]
     dynamic = [json.loads(line) for line in (root / "eval_dynamic.jsonl").read_text().splitlines()]
     assert len(historical) == len(dynamic) == 150
-    assert BENCHMARK_VERSION == "mvp-v3"
+    assert BENCHMARK_VERSION == "mvp-v4"
     assert all(row["benchmark_version"] == BENCHMARK_VERSION for row in historical + dynamic)
     assert len({row["secret"] for row in historical}) == 150
     assert all(len(row["pool"]) == len(set(row["pool"])) == 256 and row["secret"] in row["pool"] for row in dynamic)
 
 
-def test_v3_manifest_migration_changed_only_version_metadata() -> None:
+def test_v4_manifest_migration_changed_only_version_metadata() -> None:
     expected_payload_hashes = {
         "dev_dynamic.jsonl": "3b571fae4adc38f99bd34462ade24476832e37a8e9e482408a220e60bf3b7c49",
         "dev_historical.jsonl": "9d6883df1f30196a3ea0cb25c60ca48ce51c4d5a5987838d17ea8bd03305364d",
@@ -52,7 +52,7 @@ def test_v3_manifest_migration_changed_only_version_metadata() -> None:
         rows = []
         for line in path.read_text().splitlines():
             row = json.loads(line)
-            assert row.pop("benchmark_version") == "mvp-v3"
+            assert row.pop("benchmark_version") == "mvp-v4"
             rows.append(row)
         digest = hashlib.sha256(json.dumps(rows, separators=(",", ":")).encode()).hexdigest()
         assert digest == expected_payload_hashes[path.name]

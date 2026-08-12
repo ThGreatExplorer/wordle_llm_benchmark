@@ -58,8 +58,16 @@ def test_cli_runs_one_mock_game_from_frozen_dev_manifest(tmp_path, monkeypatch, 
     assert capsys.readouterr().out == "completed 1 game\n"
     assert summary["solved"] and summary["game_id"] == "dynamic_dev_0000"
     assert proposal["prompt_version"] == "prompt-v4"
+    assert proposal["game_mode"] == summary["game_mode"] == metadata["game_mode"] == "normal"
     assert {
         "run_id", "started_at_utc", "git_commit", "benchmark_version", "prompt_version",
         "manifest_hashes", "word_list_hashes", "models_config_hash", "benchmark_config_hash",
         "lock_hash", "python", "platform", "selected_manifest", "selected_model_config",
     } <= metadata.keys()
+
+    monkeypatch.setattr(sys, "argv", [
+        "benchmark", "run-mock", "--condition", "dynamic_256", "--mode", "strict",
+        "--run-id", "mock-real-data", "--results", str(tmp_path),
+    ])
+    with pytest.raises(ValueError, match="metadata differs"):
+        main()

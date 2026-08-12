@@ -18,7 +18,7 @@ from benchmark.analysis import analyze_results
 from benchmark import BENCHMARK_VERSION, PROMPT_VERSION
 from benchmark.experiment.batch import run_batch
 from benchmark.providers import HuggingFaceNscaleAdapter, MockAdapter, OpenAIResponsesAdapter
-from benchmark.types import Condition
+from benchmark.types import Condition, GameMode
 
 
 def _hash(path: Path) -> str:
@@ -54,7 +54,7 @@ def _positive_int(value: str) -> int:
 
 def _metadata(
     run_id: str, config_path: Path, models_path: Path, config: dict,
-    selected_model: dict, manifest: Path,
+    selected_model: dict, manifest: Path, game_mode: GameMode,
 ) -> dict:
     metadata = {
         "run_id": run_id,
@@ -64,6 +64,7 @@ def _metadata(
         ).stdout.strip() or None,
         "benchmark_version": BENCHMARK_VERSION,
         "prompt_version": PROMPT_VERSION,
+        "game_mode": game_mode.value,
         "manifest_hashes": {
             path.name: _hash(path) for path in sorted(Path(config["manifests"]).glob("*.jsonl"))
         },
@@ -104,6 +105,7 @@ def main() -> None:
     run.add_argument("--models-config", type=Path, default=Path("configs/models.yaml"))
     run.add_argument("--model", required=True)
     run.add_argument("--condition", type=Condition, choices=list(Condition), required=True)
+    run.add_argument("--mode", type=GameMode, choices=list(GameMode), required=True)
     run.add_argument("--split", choices=("dev", "eval"), default="dev")
     run.add_argument("--run-id", required=True)
     run.add_argument("--results", type=Path, default=Path("results"))
@@ -113,6 +115,7 @@ def main() -> None:
     mock = subparsers.add_parser("run-mock")
     mock.add_argument("--config", type=Path, default=Path("configs/benchmark.yaml"))
     mock.add_argument("--condition", type=Condition, choices=list(Condition), default=Condition.DYNAMIC_256)
+    mock.add_argument("--mode", type=GameMode, choices=list(GameMode), default=GameMode.NORMAL)
     mock.add_argument("--run-id", required=True)
     mock.add_argument("--results", type=Path, default=Path("results"))
     analyze = subparsers.add_parser("analyze")
@@ -159,7 +162,7 @@ def main() -> None:
         output = args.results / args.run_id
         output.mkdir(parents=True, exist_ok=True)
         metadata = _metadata(args.run_id, args.config, args.models_config, benchmark_config,
-                             model_config, manifest)
+                             model_config, manifest, args.mode)
         metadata["game_limit"] = args.limit
         metadata_path = output / "metadata.json"
         _resume_metadata(metadata_path, metadata)
@@ -184,6 +187,7 @@ def main() -> None:
         results = asyncio.run(run_batch(
             adapter, args.condition, games, output / "proposals.jsonl", output / "summaries.jsonl",
             run_id=args.run_id, model_key=args.model, concurrency=args.concurrency,
+            game_mode=args.mode,
             max_cost_usd=args.max_cost_usd, prices=prices,
             metadata=proposal_metadata,
         ))
@@ -202,11 +206,13 @@ def main() -> None:
         output.mkdir(parents=True, exist_ok=True)
         models_path = Path("configs/models.yaml")
         metadata = _metadata(args.run_id, args.config, models_path, config,
-                             {"provider": "mock", "model": "deterministic-secret"}, manifest)
+                             {"provider": "mock", "model": "deterministic-secret"}, manifest,
+                             args.mode)
         _resume_metadata(output / "metadata.json", metadata)
         results = asyncio.run(run_batch(
             adapter, args.condition, [(game_id, state)], output / "proposals.jsonl",
             output / "summaries.jsonl", run_id=args.run_id, model_key="mock",
+            game_mode=args.mode,
             metadata={"benchmark_version": BENCHMARK_VERSION, "prompt_version": PROMPT_VERSION,
                       "manifest_hash": _hash(manifest), "model_config_hash": _hash(models_path),
                       "provider": "mock", "requested_model_id": "deterministic-secret"},

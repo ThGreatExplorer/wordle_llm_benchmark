@@ -6,30 +6,34 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from benchmark.experiment.runner import GameResult, append_result, run_game
-from benchmark.types import Condition, GameState, ModelAdapter
+from benchmark.types import Condition, GameMode, GameState, ModelAdapter
 
 
-def completed_game_ids(summary_path: Path, run_id: str, model_key: str, condition: Condition) -> set[str]:
+def completed_game_ids(
+    summary_path: Path, run_id: str, model_key: str, condition: Condition, game_mode: GameMode,
+) -> set[str]:
     if not summary_path.exists():
         return set()
     completed = set()
     for line in summary_path.read_text().splitlines():
         row = json.loads(line)
-        if (row.get("run_id"), row.get("model_key"), row.get("condition")) == (
-            run_id, model_key, condition.value
+        if (row.get("run_id"), row.get("model_key"), row.get("condition"), row.get("game_mode")) == (
+            run_id, model_key, condition.value, game_mode.value,
         ):
             completed.add(row["game_id"])
     return completed
 
 
-def existing_cost(summary_path: Path, run_id: str, model_key: str, condition: Condition) -> float:
+def existing_cost(
+    summary_path: Path, run_id: str, model_key: str, condition: Condition, game_mode: GameMode,
+) -> float:
     if not summary_path.exists():
         return 0
     return sum(
         row.get("estimated_cost_usd_total") or 0
         for row in map(json.loads, summary_path.read_text().splitlines())
-        if (row.get("run_id"), row.get("model_key"), row.get("condition"))
-        == (run_id, model_key, condition.value)
+        if (row.get("run_id"), row.get("model_key"), row.get("condition"), row.get("game_mode"))
+        == (run_id, model_key, condition.value, game_mode.value)
     )
 
 
@@ -42,6 +46,7 @@ async def run_batch(
     *,
     run_id: str,
     model_key: str,
+    game_mode: GameMode = GameMode.NORMAL,
     concurrency: int = 1,
     max_cost_usd: float | None = None,
     prices: tuple[float | None, float | None, float | None] = (0, 0, 0),
@@ -51,18 +56,18 @@ async def run_batch(
         raise ValueError("concurrency must be positive")
     if max_cost_usd is not None and None in prices:
         raise ValueError("--max-cost-usd requires configured model pricing")
-    completed = completed_game_ids(summary_path, run_id, model_key, condition)
+    completed = completed_game_ids(summary_path, run_id, model_key, condition, game_mode)
     pending = [(game_id, state) for game_id, state in games if game_id not in completed]
     semaphore = asyncio.Semaphore(concurrency)
 
     async def run(item: tuple[str, GameState]) -> tuple[str, GameResult]:
         async with semaphore:
             return item[0], await run_game(
-                adapter, condition, item[1], input_price_per_million=prices[0],
+                adapter, condition, item[1], game_mode=game_mode, input_price_per_million=prices[0],
                 output_price_per_million=prices[1], reasoning_price_per_million=prices[2],
             )
 
-    spent = existing_cost(summary_path, run_id, model_key, condition)
+    spent = existing_cost(summary_path, run_id, model_key, condition, game_mode)
     written = []
     # ponytail: a concurrent batch can overshoot by at most concurrency games; reserve estimates if tighter control matters.
     for offset in range(0, len(pending), concurrency):

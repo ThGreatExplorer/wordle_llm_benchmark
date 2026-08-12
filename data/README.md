@@ -43,11 +43,11 @@ Both commands refuse to overwrite frozen artifacts unless `--force` is explicit.
 
 Frozen manifest SHA-256 hashes:
 
-- `dev_historical.jsonl`: `5eccb79364c3abb677833180756eb2ffbb504da3fbb7373469c186e5d9b258a7`
-- `eval_historical.jsonl`: `c5c2690428e50a8550ede0d365ca7b2263194d47befad8925c277e5c73d56fde`
-- `dev_dynamic.jsonl`: `c7db0b49490471b1b214b333526b2d0b84b4c3233387aae7b48462667de870e8`
-- `eval_dynamic.jsonl`: `07f14a21e8af7dab236f76e89944e7dd5572a9696939622df1a38dbb4159e417`
+- `dev_historical.jsonl`: `f6e4ec45e9cdd183d6298961cf36011c1af531964f03b91f0d4d90757f07f8cc`
+- `eval_historical.jsonl`: `3edd1a92371e6dd47a765d7dfddc19e6e526dee55f33f70dad1a684d163ef683`
+- `dev_dynamic.jsonl`: `6d1d22d7d69499569571ae520bc919dfa802e359ad08acea4de1fb5faaa4506e`
+- `eval_dynamic.jsonl`: `bb713167d14442df1286d2e46f1ee32c272a9d057a2738409d7eb3a5dcfab99f`
 
-The `mvp-v3` migration changed only each manifest record's `benchmark_version` from
-`mvp-v2`; all materialized game IDs, secrets, pools, seeds, counts, and ordering
-remain identical.
+The `mvp-v4` migration changed only each manifest record's `benchmark_version` from
+`mvp-v3`; payload fingerprints verify that all materialized game IDs, secrets,
+pools, seeds, counts, and ordering remain identical.

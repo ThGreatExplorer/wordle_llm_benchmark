@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from benchmark import PROMPT_VERSION
-from benchmark.types import Condition, GameState, GuessStatus
+from benchmark.types import ActionStatus, Condition, GameState
 
 BANNED = ("wordle", "green", "yellow", "gray", "grey", "nyt", "new york times", "hard mode")
 
@@ -88,9 +88,9 @@ def instructional_prose(condition: Condition) -> str:
 
 
 def _repair(
-    condition: Condition, rejected_guess: str | None, rejection: GuessStatus | str
+    condition: Condition, rejected_guess: str | None, rejection: ActionStatus | str
 ) -> str:
-    error = rejection.value if isinstance(rejection, GuessStatus) else rejection
+    error = rejection.value if isinstance(rejection, ActionStatus) else rejection
     if error == "PROTOCOL_ERROR":
         return """REPAIR REQUEST
 
@@ -132,7 +132,7 @@ def build_prompt(
     state: GameState,
     decision_round: int,
     rejected_guess: str | None = None,
-    rejection: GuessStatus | str | None = None,
+    rejection: ActionStatus | str | None = None,
 ) -> str:
     parts = [f"Prompt version: {PROMPT_VERSION}", instructional_prose(condition)]
     if condition is Condition.DYNAMIC_256:

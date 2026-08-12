@@ -49,11 +49,22 @@ There are six primary model tracks:
 - Qwen3 14B
 - Qwen3 32B
 
-The complete evaluation therefore contains:
+NORMAL mode is the primary general-solving evaluation:
 
 ```text
 6 models × 3 conditions × 150 games = 2,700 games
 ```
+
+Constraint enforcement is a separate explicit dimension:
+
+- `normal` plays every structurally and lexically legal top-1 while recording
+  exact constraint consistency.
+- `strict` preserves the constraint-enforced protocol: an inconsistent top-1
+  receives one repair attempt and a failed repair forfeits the round.
+
+STRICT is an additional scientifically meaningful evaluation, not a deprecated
+mode. The harness supports both modes without automatically doubling the primary
+matrix.
 
 Separate development manifests are used for debugging and provider integration before the evaluation manifests are touched.
 
@@ -75,14 +86,18 @@ Only guess #1 is used as the proposed game action. Guesses #2 and #3 are recorde
 
 The benchmark validates the proposed top-1 guess locally.
 
-Possible outcomes are:
+Every suggestion receives an action status:
 
 ```text
 FORMAT_ERROR
 LEXICON_ERROR
-CONSTRAINT_ERROR
 VALID
 ```
+
+Every action-valid suggestion separately receives
+`constraint_consistent: true|false`. In NORMAL, an inconsistent legal top-1 is
+played and receives feedback. In STRICT, it is surfaced to repair as
+`CONSTRAINT_ERROR` and blocked unless repaired.
 
 If the initial top-1 guess is invalid, the model receives exactly **one repair attempt** containing the error class but not the exact violated clue.
 
@@ -178,13 +193,19 @@ This prevents a model with many failures from looking artificially efficient whe
 
 ### Constraint fidelity
 
-**Valid@1** — fraction of initial top-ranked proposals that satisfy all format, lexicon, and historical constraints.
+**Action Valid@1/@3** — structural/lexical legality over initial top-1/all slots.
 
-**Valid@3** — fraction of all three suggestions that are valid under the current state.
+**Constraint Consistent@1/@3** — exact replay consistency among action-valid guesses.
+
+**Strict Valid@1/@3** — action validity and constraint consistency jointly,
+retaining comparability with older `Valid` metrics.
 
 ### Strategic quality
 
 For every state, the deterministic solver computes expected information gain for every currently legal guess.
+
+NORMAL uses a full legal-guess oracle; STRICT uses the current strict-consistent
+legal-guess oracle. Regret values always identify the mode/oracle definition.
 
 This supports:
 
@@ -268,6 +289,7 @@ command:
 uv run python -m benchmark run \
   --model gpt4o \
   --condition hist_named \
+  --mode normal \
   --split dev \
   --run-id dev-gpt4o \
   --concurrency 1 \
@@ -288,7 +310,8 @@ so estimated costs are `null` and `--max-cost-usd` is unavailable for these runs
 Use `--limit 1` for a one-game development smoke test.
 
 Results are append-only JSONL under `results/<run-id>/`. Reusing the same run ID
-skips completed model/condition/game keys and rejects changed run metadata.
+skips completed model/condition/mode/game keys and rejects changed run metadata,
+including attempts to resume under another mode.
 Because usage is known only after a response, concurrent cost guarding can exceed
 the limit by at most one batch (`--concurrency` games); use concurrency 1 for the
 tightest budget control.
@@ -391,8 +414,9 @@ Implement all three prompt variants, output parsing, error classification, one-r
 ```bash
 uv run python -m benchmark run \
   --config configs/benchmark.yaml \
-  --models mock \
-  --mode dynamic_256 \
+  --condition dynamic_256 \
+  --mode normal \
+  --run-id mock-dynamic-normal \
   --split dev
 ```
 
@@ -426,8 +450,10 @@ The final CLI may differ slightly during implementation, but it should support w
 ```bash
 uv run python -m benchmark run \
   --config configs/benchmark.yaml \
-  --models gpt-4o \
-  --mode hist_named \
+  --model gpt4o \
+  --condition hist_named \
+  --mode normal \
+  --run-id gpt4o-hist-named-normal-dev \
   --split dev
 ```
 
@@ -436,8 +462,10 @@ uv run python -m benchmark run \
 ```bash
 uv run python -m benchmark run \
   --config configs/benchmark.yaml \
-  --models qwen3-8b \
-  --mode dynamic_256 \
+  --model qwen3_8b \
+  --condition dynamic_256 \
+  --mode strict \
+  --run-id qwen3-8b-dynamic-strict-dev \
   --split dev
 ```
 
@@ -446,8 +474,10 @@ uv run python -m benchmark run \
 ```bash
 uv run python -m benchmark run \
   --config configs/benchmark.yaml \
-  --models gpt-4o \
-  --mode hist_named \
+  --model gpt4o \
+  --condition hist_named \
+  --mode normal \
+  --run-id gpt4o-hist-named-normal-budgeted \
   --split dev \
   --max-cost-usd 2
 ```
@@ -509,6 +539,7 @@ models config hash
 benchmark config hash
 Python version
 uv.lock hash
+game mode
 provider/model identifiers
 pricing configuration
 host/platform metadata
@@ -532,7 +563,7 @@ resamples by default; use `--seed` or `--bootstrap-resamples` explicitly when a
 different recorded analysis configuration is required.
 
 Open `analysis/dashboard.html` directly in a browser for interactive model,
-condition, and metric filters, confidence-interval charts, clue-age curves, and
+condition, mode, and metric filters, confidence-interval charts, clue-age curves, and
 sortable result tables. The dashboard is self-contained and makes no network calls.
 
 ---
@@ -593,7 +624,7 @@ The benchmark should retain two levels of records.
 One record for every initial or repair model response, including:
 
 - top-three guesses;
-- validity/error category for each;
+- action status and constraint consistency for each;
 - round/state metadata;
 - candidate count;
 - information-gain metrics;
@@ -609,7 +640,7 @@ One row per model × condition × game containing at least:
 - solved/not solved;
 - solve round;
 - decision-round score;
-- accepted-guess count;
+- game mode and played-guess count;
 - repair count;
 - repair successes;
 - forfeits.
