@@ -79,3 +79,6 @@ class GameState:
     def accept(self, guess: str, feedback: FeedbackPattern, decision_round: int) -> None:
         self.history.append(HistoryEntry(guess, feedback, decision_round))
 
+    @property
+    def solved(self) -> bool:
+        return bool(self.history and self.history[-1].guess == self.secret)
