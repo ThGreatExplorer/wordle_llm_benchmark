@@ -26,7 +26,7 @@ Then generate the fully materialized development and evaluation manifests with
 
 Frozen manifest SHA-256 hashes:
 
-- `dev_historical.jsonl`: `fc4193c922dbcd1edbe10a86ea6437be49777661884db79948ef7fd6faf0d5d7`
-- `eval_historical.jsonl`: `037b5038ba3d4f0cd560eabea51baf6fb7b51b32a5c701d71ea4c024c0922e49`
-- `dev_dynamic.jsonl`: `607bed09fa274828cf32b3da2af7a01698c6d92dfb078c8201b3391a8add11bf`
-- `eval_dynamic.jsonl`: `f2acea506f7583336e6ac052da78ff56bdee5bdf77ea6e0d953ba4bf8a882280`
+- `dev_historical.jsonl`: `dc941e3d9cd87d3124957f45898de258d046421219c10098ce0c603492e5e15f`
+- `eval_historical.jsonl`: `49af93d015b3e7a1c83aba1832136dc2b4da6dafe1ca94b26ba7b16989d5acf3`
+- `dev_dynamic.jsonl`: `6e93a8debde88562ff32735fceda4c9a875e6a9d4186c0d173bc82528c8467bc`
+- `eval_dynamic.jsonl`: `d309ae4704863b6651185c9d12f4df22e79b7086269daeeac5433af2f2e83b38`

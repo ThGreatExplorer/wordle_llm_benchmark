@@ -72,12 +72,11 @@ Do not duplicate large portions of `DESIGN.md` into code comments. Link concepts
 
 ## Experimental invariants: do not change silently
 
-The MVP consists of exactly seven model tracks:
+The MVP consists of exactly six model tracks:
 
 - GPT-4o
 - GPT-5
 - GPT-5.6
-- Qwen3 4B
 - Qwen3 8B
 - Qwen3 14B
 - Qwen3 32B
@@ -161,7 +160,7 @@ Implement and test:
 Only after Milestones 1–3 pass:
 
 - OpenAI Responses API adapter;
-- generic OpenAI-compatible adapter for Qwen/vLLM/hosted endpoints;
+- OpenRouter adapter through its OpenAI-compatible endpoint for Qwen;
 - token/latency/cost capture;
 - transient retry handling;
 - bounded concurrency;
@@ -587,7 +586,7 @@ Unless explicitly requested after the base benchmark works, do not add:
 - feedback-label ablations;
 - automatic fallback to top-2/top-3 guesses.
 
-The optional Qwen3-4B fine-tuning experiment is post-MVP.
+Qwen3 4B and fine-tuning are not part of the MVP.
 
 ---
 

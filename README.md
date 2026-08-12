@@ -40,12 +40,11 @@ The frozen MVP contains three conditions.
 
 `dynamic_256` contains 150 independently generated and frozen candidate pools. Each model receives the exact same pools, secrets, and candidate ordering.
 
-There are seven primary model tracks:
+There are six primary model tracks:
 
 - GPT-4o
 - GPT-5
 - GPT-5.6
-- Qwen3 4B
 - Qwen3 8B
 - Qwen3 14B
 - Qwen3 32B
@@ -53,7 +52,7 @@ There are seven primary model tracks:
 The complete evaluation therefore contains:
 
 ```text
-7 models × 3 conditions × 150 games = 3,150 games
+6 models × 3 conditions × 150 games = 2,700 games
 ```
 
 Separate development manifests are used for debugging and provider integration before the evaluation manifests are touched.
@@ -275,9 +274,10 @@ uv run python -m benchmark run \
   --max-cost-usd 1
 ```
 
-For Qwen, update `base_url` in `configs/models.yaml` to the OpenAI-compatible
-server and set `QWEN_API_KEY` when the endpoint requires one. Each request is
-stateless; the runner never passes a conversation or previous-response ID.
+For Qwen, set `OPENROUTER_API_KEY`. The frozen Qwen3 8B, 14B, and 32B tracks use
+OpenRouter's OpenAI-compatible endpoint; local model serving is not part of this
+benchmark. Each request is stateless, and the runner never passes a conversation
+or previous-response ID.
 
 Results are append-only JSONL under `results/<run-id>/`. Reusing the same run ID
 skips completed model/condition/game keys and rejects changed run metadata.
@@ -292,7 +292,7 @@ tightest budget control.
 - Python 3.11 or newer
 - [`uv`](https://docs.astral.sh/uv/)
 - API credentials only for providers you intend to run
-- Optional GPU environment for locally hosted Qwen models
+- OpenRouter account and API key for the Qwen tracks
 
 The project uses `uv` for dependency management, virtual environments, locking, and command execution.
 
@@ -395,7 +395,7 @@ Only after deterministic and mock tests pass, connect real providers.
 The benchmark needs two main adapter styles:
 
 - OpenAI Responses API;
-- generic OpenAI-compatible endpoint for local or hosted Qwen inference.
+- OpenRouter's OpenAI-compatible endpoint for Qwen inference.
 
 Provider-specific model IDs, endpoints, prices, and reasoning settings belong in configuration rather than game code.
 
@@ -477,16 +477,10 @@ For the primary benchmark, use direct/non-thinking or the lowest practical reaso
 
 ## Qwen execution
 
-Qwen models may be run either:
+Qwen models run through OpenRouter's hosted OpenAI-compatible API. Local serving
+and other aggregators are outside the frozen benchmark protocol.
 
-- through a hosted OpenAI-compatible API; or
-- locally/remotely through an OpenAI-compatible serving stack such as vLLM.
-
-The benchmark core should not care which one is used.
-
-For the cleanest Qwen3 4B → 8B → 14B → 32B scaling comparison, serving all four through the same software/configuration is preferred when hardware permits.
-
-Local-serving details such as model weights, GPU allocation, quantization, and server startup commands are deployment-specific and should live outside the deterministic game engine.
+The frozen Qwen scaling comparison is Qwen3 8B → 14B → 32B, with all three routed through OpenRouter. Qwen3 4B is excluded because it is unavailable in the selected deployment.
 
 ---
 
@@ -510,7 +504,7 @@ pricing configuration
 host/platform metadata
 ```
 
-For local Qwen runs, also record serving software/version, dtype or quantization, GPU information, tensor parallelism, context length, and thinking-mode configuration where available.
+For OpenRouter Qwen runs, also record requested and returned model identifiers, routing/provider metadata when available, pricing configuration, and reasoning mode.
 
 Raw results should be treated as immutable experiment artifacts. Analysis should read raw logs and write derived tables/figures separately rather than mutating the original records.
 
@@ -601,7 +595,7 @@ Prefer Parquet for analysis-friendly outputs and JSONL where an inspectable appe
 
 ### RQ1 — model capability
 
-Compare all seven models on task success, constraint fidelity, information efficiency, ranking/search regret, constraint-age errors, and repair behavior.
+Compare all six models on task success, constraint fidelity, information efficiency, ranking/search regret, constraint-age errors, and repair behavior.
 
 For Qwen, parameter count provides a natural scaling axis. For OpenAI models, treat GPT-4o → GPT-5 → GPT-5.6 as a model-generation comparison rather than a parameter-count curve.
 
@@ -631,7 +625,7 @@ This is a generalization/validation comparison rather than a perfectly isolated 
 
 ## Optional post-MVP extension
 
-After the primary benchmark is complete, an optional experiment may fine-tune **Qwen3 4B only** on solver-generated dynamic-game trajectories.
+Fine-tuning is outside the MVP and is not specified for the frozen six-model benchmark.
 
 Evaluate the fine-tuned model on:
 
@@ -640,7 +634,7 @@ Evaluate the fine-tuned model on:
 
 This extension asks whether fine-tuning learns transferable constraint reasoning rather than merely memorizing Wordle-specific vocabulary or surface labels.
 
-It must not alter the primary seven-model RQ1–RQ3 benchmark.
+Any future fine-tuning study must not alter the primary six-model RQ1–RQ3 benchmark.
 
 ---
 

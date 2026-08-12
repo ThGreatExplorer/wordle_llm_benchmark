@@ -1,15 +1,15 @@
 # Wordle LLM Benchmark: MVP Design Specification
 
-**Status:** Frozen MVP design for implementation
+**Status:** Frozen MVP v2 design for implementation
 **Audience:** Codex / software engineer implementing the benchmark
 **Primary language:** Python 3.11+
-**Purpose:** Build a reproducible benchmark for multi-turn lexical constraint reasoning across seven language models.
+**Purpose:** Build a reproducible benchmark for multi-turn lexical constraint reasoning across six language models.
 
 ---
 
 ## 1. Project summary
 
-Build a deterministic local Wordle-style game engine plus a stateless LLM evaluation harness. The system evaluates seven models across three game conditions using frozen test manifests. Each model must receive the same instances within a condition. Every LLM turn is a fresh API/model call reconstructed from the public game state; no provider conversation state may persist between turns or games.
+Build a deterministic local Wordle-style game engine plus a stateless LLM evaluation harness. The system evaluates six models across three game conditions using frozen test manifests. Each model must receive the same instances within a condition. Every LLM turn is a fresh API/model call reconstructed from the public game state; no provider conversation state may persist between turns or games.
 
 The benchmark studies whether models can:
 
@@ -37,7 +37,7 @@ Does changing Wordle from a fixed historical answer distribution to dynamically 
 
 ## 3. Models
 
-The frozen seven-model comparison is:
+The frozen six-model comparison is:
 
 ### OpenAI generation track
 
@@ -47,16 +47,15 @@ The frozen seven-model comparison is:
 
 ### Qwen3 parameter-scaling track
 
-4. Qwen3 4B
-5. Qwen3 8B
-6. Qwen3 14B
-7. Qwen3 32B
+4. Qwen3 8B
+5. Qwen3 14B
+6. Qwen3 32B
 
 Do not hard-code provider-specific model IDs into game logic. Put exact model identifiers, reasoning settings, endpoints, pricing, and credentials in configuration.
 
 For the main benchmark, use direct/non-thinking or the lowest practical reasoning mode so that inference-time reasoning budgets are not intentionally varied across families. Record the exact inference configuration for every run.
 
-For Qwen, support both local and hosted execution through an OpenAI-compatible adapter. The preferred scientific setup is to serve all four Qwen models through the same stack (for example vLLM) if hardware permits, but the benchmark core must not depend on where Qwen is hosted.
+All Qwen tracks MUST run through OpenRouter's OpenAI-compatible Chat Completions endpoint. Use the frozen OpenRouter model slugs `qwen/qwen3-8b`, `qwen/qwen3-14b`, and `qwen/qwen3-32b`. Qwen3 4B is not part of the benchmark because it is not available in the selected OpenRouter deployment. Disable reasoning/thinking through OpenRouter's normalized reasoning configuration and require routed providers to support every requested parameter, including structured outputs. Record the returned model and provider metadata available from each response.
 
 ---
 
@@ -72,7 +71,7 @@ There are three conditions and 150 evaluation instances per condition per model.
 
 Total games:
 
-`7 models * 3 conditions * 150 instances = 3150 games`
+`6 models * 3 conditions * 150 instances = 2700 games`
 
 A game has at most **6 decision rounds**.
 
@@ -182,7 +181,7 @@ Example:
 
 ```json
 {
-  "benchmark_version": "mvp-v1",
+  "benchmark_version": "mvp-v2",
   "game_id": "hist_0042",
   "secret": "crane"
 }
@@ -196,7 +195,7 @@ Example:
 
 ```json
 {
-  "benchmark_version": "mvp-v1",
+  "benchmark_version": "mvp-v2",
   "game_id": "dynamic_0042",
   "pool_seed": 82910422,
   "secret_seed": 19328501,
@@ -532,7 +531,7 @@ providers/openai_compatible.py
 providers/mock.py
 ```
 
-`openai_compatible.py` should accept a base URL and model name so it can point at local vLLM or a compatible hosted provider for Qwen.
+`openai_compatible.py` targets OpenRouter for the Qwen tracks. Keep the base URL and model slug configurable, but do not use locally hosted Qwen models in the primary benchmark.
 
 ### Provider responsibilities
 
@@ -588,15 +587,15 @@ models:
     temperature: 0
     reasoning_effort: <none/direct mode if supported>
 
-  qwen3_4b:
+  qwen3_8b:
     provider: openai_compatible
-    base_url: <local-or-hosted-url>
-    model: <exact-server-model-id>
+    base_url: https://openrouter.ai/api/v1
+    model: qwen/qwen3-8b
     temperature: 0
     thinking: false
 ```
 
-Repeat for Qwen3 8B, 14B, and 32B.
+Repeat for Qwen3 14B and 32B using their exact OpenRouter slugs.
 
 Do not assume deterministic inference merely because temperature is zero. Record configuration and treat the 150 frozen instances as the experimental sample. If a provider exposes a request seed, it may be recorded/used, but the benchmark must not rely on it for correctness.
 
@@ -877,7 +876,7 @@ For each model and condition, report at minimum:
 - forfeit rate;
 - constraint-violation curve by clue age.
 
-For Qwen3 specifically, plot metrics against parameter scale (4B, 8B, 14B, 32B).
+For Qwen3 specifically, plot metrics against parameter scale (8B, 14B, 32B).
 
 For OpenAI, describe GPT-4o -> GPT-5 -> GPT-5.6 as a model-generation comparison, not a parameter-scaling curve.
 
@@ -1301,14 +1300,7 @@ provider/model identifiers
 pricing config used
 ```
 
-For local Qwen runs, additionally record where possible:
-
-- serving software/version;
-- dtype/quantization;
-- tensor parallelism;
-- GPU model(s);
-- max context setting;
-- thinking mode disabled/enabled.
+For OpenRouter Qwen runs, additionally record the requested model slug, returned model identifier, routing/provider metadata when available, pricing configuration, and reasoning mode.
 
 ---
 
@@ -1344,7 +1336,7 @@ Implement in this order so external API cost is incurred only after deterministi
 ### Milestone 4: provider integration
 
 - official OpenAI Responses adapter;
-- generic OpenAI-compatible adapter for vLLM/hosted Qwen;
+- OpenRouter adapter through its OpenAI-compatible endpoint for Qwen;
 - token/latency/cost capture;
 - transient infrastructure retries;
 - concurrency and resume.
@@ -1378,28 +1370,9 @@ Do NOT add these unless the core benchmark is complete:
 
 ---
 
-## 29. Optional post-MVP Qwen3-4B fine-tuning extension
+## 29. Frozen Qwen deployment decision
 
-This extension is intentionally last.
-
-Compare:
-
-```text
-Qwen3-4B base
-vs
-Qwen3-4B fine-tuned
-```
-
-Train only on dynamically generated instances that are disjoint from all evaluation manifests. Generate solver-supervised examples mapping a reconstructed game state to oracle-ranked top guesses, using the deterministic information-gain solver.
-
-Evaluate on:
-
-1. unseen dynamic candidate pools with normal labels;
-2. unseen dynamic candidate pools where `EXACT`, `PRESENT`, and `ABSENT` are replaced by arbitrary labels under a clearly specified random bijection.
-
-The purpose is to test whether improvements transfer to new candidate universes and surface labels, rather than whether the model memorized Wordle-specific wording.
-
-Do not let fine-tuning results alter the primary seven-model benchmark or RQ1-RQ3 protocol.
+The primary benchmark uses OpenRouter exclusively for Qwen3 8B, 14B, and 32B. Do not substitute local serving, another aggregator, a newer Qwen generation, or Qwen3 4B without creating a new benchmark version and rerunning all affected comparisons. Fine-tuning remains outside the MVP.
 
 ---
 
@@ -1413,7 +1386,7 @@ The MVP is complete when all of the following are true:
 4. a mock provider can run the entire game/repair protocol end to end;
 5. OpenAI and OpenAI-compatible provider adapters can execute stateless calls;
 6. one development game can be run successfully for an OpenAI model;
-7. one development game can be run successfully against a Qwen endpoint/local server;
+7. one development game can be run successfully against each configured OpenRouter Qwen track;
 8. results are resumable and logged without duplicate completed games;
 9. the analysis command computes primary metrics plus the agreed behavioral metrics;
 10. no evaluation run depends on persistent LLM session state;

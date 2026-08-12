@@ -14,6 +14,7 @@ from pathlib import Path
 import yaml
 
 from benchmark.experiment.manifests import generate_manifests, load_words
+from benchmark import BENCHMARK_VERSION, PROMPT_VERSION
 from benchmark.experiment.batch import run_batch
 from benchmark.providers import OpenAICompatibleAdapter, OpenAIResponsesAdapter
 from benchmark.types import Condition, GameState
@@ -28,6 +29,13 @@ def _freeze_metadata(path: Path, metadata: dict) -> None:
     if path.exists() and path.read_text() != serialized:
         raise ValueError(f"run metadata differs from existing {path}")
     path.write_text(serialized)
+
+
+def _required_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise ValueError(f"required environment variable {name} is not set")
+    return value
 
 
 def _states(manifest: Path, condition: Condition, answers: Path, extras: Path):
@@ -72,9 +80,10 @@ def main() -> None:
                 temperature=model_config.get("temperature"),
             )
         else:
+            api_key_env = model_config.get("api_key_env", "OPENROUTER_API_KEY")
             adapter = OpenAICompatibleAdapter(
                 model_config["model"], model_config["base_url"],
-                api_key=os.environ.get(model_config.get("api_key_env", "QWEN_API_KEY"), "not-required"),
+                api_key=_required_env(api_key_env),
                 temperature=model_config.get("temperature", 0),
                 extra_body=model_config.get("extra_body"),
             )
@@ -92,8 +101,8 @@ def main() -> None:
             "git_commit": subprocess.run(
                 ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
             ).stdout.strip() or None,
-            "benchmark_version": "mvp-v1",
-            "prompt_version": "prompt-v1",
+            "benchmark_version": BENCHMARK_VERSION,
+            "prompt_version": PROMPT_VERSION,
             "manifest_hashes": {
                 path.name: _hash(path)
                 for path in sorted(Path(benchmark_config["manifests"]).glob("*.jsonl"))
@@ -121,7 +130,7 @@ def main() -> None:
             adapter, args.condition, games, output / "proposals.jsonl", output / "summaries.jsonl",
             run_id=args.run_id, model_key=args.model, concurrency=args.concurrency,
             max_cost_usd=args.max_cost_usd, prices=prices,
-            metadata={"benchmark_version": "mvp-v1", "prompt_version": "prompt-v1",
+            metadata={"benchmark_version": BENCHMARK_VERSION, "prompt_version": PROMPT_VERSION,
                       "manifest_hash": _hash(manifest), "model_config_hash": _hash(args.models_config),
                       "provider": model_config["provider"], "requested_model_id": model_config["model"]},
         ))

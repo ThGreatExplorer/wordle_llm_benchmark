@@ -62,6 +62,7 @@ class ModelResponse:
     latency_ms: float = 0.0
     provider_request_id: str | None = None
     model_returned: str | None = None
+    provider_returned: str | None = None
     protocol_error: str | None = None
 
 

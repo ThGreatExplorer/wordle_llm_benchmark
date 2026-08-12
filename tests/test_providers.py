@@ -30,11 +30,15 @@ def test_responses_adapter_is_stateless_and_captures_usage() -> None:
 
 def test_compatible_adapter_is_stateless_and_preserves_protocol_errors() -> None:
     endpoint = Capture(NS(
-        choices=[NS(message=NS(content='{"guesses":["only"]}'))], model="qwen", _request_id="req",
+        choices=[NS(message=NS(content='{"guesses":["only"]}'))], model="qwen", provider="openrouter-provider", _request_id="req",
         usage=NS(prompt_tokens=8, completion_tokens=3, completion_tokens_details=None),
     ))
     client = NS(chat=NS(completions=endpoint))
-    result = asyncio.run(OpenAICompatibleAdapter("qwen", "http://localhost/v1", client=client).predict("prompt"))
+    result = asyncio.run(OpenAICompatibleAdapter(
+        "qwen", "https://openrouter.ai/api/v1", extra_body={"reasoning": {"effort": "none"}}, client=client
+    ).predict("prompt"))
     assert result.guesses is None and result.protocol_error == "PROTOCOL_ERROR"
+    assert result.provider_returned == "openrouter-provider"
     assert endpoint.request["messages"] == [{"role": "user", "content": "prompt"}]
+    assert endpoint.request["extra_body"] == {"reasoning": {"effort": "none"}}
     assert "previous_response_id" not in endpoint.request

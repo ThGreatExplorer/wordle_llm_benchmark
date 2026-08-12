@@ -31,6 +31,7 @@ class ProposalRecord:
     estimated_cost_usd: float | None
     provider_request_id: str | None
     returned_model_id: str | None
+    returned_provider: str | None
     accepted_guess: str | None = None
     feedback: tuple[str, ...] | None = None
     candidate_count_after: int | None = None
@@ -112,6 +113,7 @@ def _record(
         best_information_gain(valid_legal, feasible),
         response.input_tokens, response.output_tokens, response.reasoning_tokens,
         response.latency_ms, cost, response.provider_request_id, response.model_returned,
+        response.provider_returned,
     )
 
 

@@ -56,5 +56,6 @@ class OpenAICompatibleAdapter:
             latency_ms=latency,
             provider_request_id=getattr(response, "_request_id", None),
             model_returned=getattr(response, "model", None),
+            provider_returned=getattr(response, "provider", None),
             protocol_error=None if guesses is not None else "PROTOCOL_ERROR",
         )

@@ -17,19 +17,24 @@ models:
     reasoning_effort: none
     input_price_per_million: 5
     output_price_per_million: 30
-  qwen3_4b: &qwen
+  qwen3_8b: &qwen
     provider: openai_compatible
-    base_url: http://localhost:8000/v1
-    api_key_env: QWEN_API_KEY
-    model: Qwen/Qwen3-4B
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    model: qwen/qwen3-8b
     temperature: 0
-    extra_body: {chat_template_kwargs: {enable_thinking: false}}
-  qwen3_8b:
-    <<: *qwen
-    model: Qwen/Qwen3-8B
+    input_price_per_million: 0.117
+    output_price_per_million: 0.455
+    extra_body:
+      reasoning: {effort: none}
+      provider: {require_parameters: true}
   qwen3_14b:
     <<: *qwen
-    model: Qwen/Qwen3-14B
+    model: qwen/qwen3-14b
+    input_price_per_million: 0.12
+    output_price_per_million: 0.24
   qwen3_32b:
     <<: *qwen
-    model: Qwen/Qwen3-32B
+    model: qwen/qwen3-32b
+    input_price_per_million: 0.08
+    output_price_per_million: 0.28
