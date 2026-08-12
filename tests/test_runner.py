@@ -21,6 +21,7 @@ def test_summary_logs_protocol_and_each_guess_error_class() -> None:
         adapter, Condition.HIST_NAMED,
         GameState("slate", ("slate", "crane", "trace"), ("slate", "crane", "trace", "other")),
     ))
+    assert "PROTOCOL_ERROR" in adapter.prompts[1] and "<unavailable>" not in adapter.prompts[1]
     assert result.summary.protocol_error_count == 1
     assert result.summary.format_error_count == 1
     assert result.summary.lexicon_error_count == 1
@@ -39,7 +40,7 @@ def test_repair_forfeit_and_session_isolation() -> None:
     assert len(result.state.history) == 2
     assert "xxxxxx" in adapter.prompts[1] and "FORMAT_ERROR" in adapter.prompts[1]
     assert "xxxxxx" not in adapter.prompts[2] and "zzzzz" not in adapter.prompts[2]
-    assert "crane:" in adapter.prompts[3]
+    assert "Guess: crane" in adapter.prompts[3]
 
 
 def test_valid_repair_and_six_round_loss(tmp_path) -> None:
