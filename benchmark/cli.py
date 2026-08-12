@@ -16,7 +16,7 @@ import yaml
 from benchmark.experiment.manifests import generate_manifests, load_game_states, load_words
 from benchmark import BENCHMARK_VERSION, PROMPT_VERSION
 from benchmark.experiment.batch import run_batch
-from benchmark.providers import MockAdapter, OpenAICompatibleAdapter, OpenAIResponsesAdapter
+from benchmark.providers import MockAdapter, OpenAIResponsesAdapter, OpenRouterAdapter
 from benchmark.types import Condition
 
 
@@ -111,14 +111,20 @@ def main() -> None:
                 model_config["model"], reasoning_effort=model_config.get("reasoning_effort"),
                 temperature=model_config.get("temperature"),
             )
-        else:
+        elif model_config["provider"] == "openrouter":
             api_key_env = model_config.get("api_key_env", "OPENROUTER_API_KEY")
-            adapter = OpenAICompatibleAdapter(
-                model_config["model"], model_config["base_url"],
+            adapter = OpenRouterAdapter(
+                model_config["model"],
                 api_key=_required_env(api_key_env),
+                upstream_provider=model_config["upstream_provider"],
+                base_url=model_config["base_url"],
                 temperature=model_config.get("temperature", 0),
-                extra_body=model_config.get("extra_body"),
+                reasoning_effort=model_config["reasoning_effort"],
+                allow_fallbacks=model_config["allow_fallbacks"],
+                require_parameters=model_config["require_parameters"],
             )
+        else:
+            raise ValueError(f"unknown provider {model_config['provider']}")
         manifest_name = "dynamic" if args.condition is Condition.DYNAMIC_256 else "historical"
         manifest = Path(benchmark_config["manifests"]) / f"{args.split}_{manifest_name}.jsonl"
         games = load_game_states(

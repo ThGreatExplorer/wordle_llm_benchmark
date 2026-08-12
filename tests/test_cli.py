@@ -20,9 +20,11 @@ def test_model_config_has_exact_frozen_tracks() -> None:
     assert set(models) == {"gpt4o", "gpt5", "gpt56", "qwen3_8b", "qwen3_14b", "qwen3_32b"}
     assert all(models[key]["base_url"] == "https://openrouter.ai/api/v1" for key in models if key.startswith("qwen"))
     assert all(models[key]["api_key_env"] == "OPENROUTER_API_KEY" for key in models if key.startswith("qwen"))
-    assert all(models[key]["extra_body"] == {
-        "reasoning": {"effort": "none"}, "provider": {"require_parameters": True}
-    } for key in models if key.startswith("qwen"))
+    assert {models[key]["upstream_provider"] for key in models if key.startswith("qwen")} == {"alibaba", "deepinfra"}
+    assert all(models[key]["provider"] == "openrouter" for key in models if key.startswith("qwen"))
+    assert all(models[key]["allow_fallbacks"] is False for key in models if key.startswith("qwen"))
+    assert all(models[key]["require_parameters"] is True for key in models if key.startswith("qwen"))
+    assert all(models[key]["reasoning_effort"] == "none" for key in models if key.startswith("qwen"))
 
 
 def test_required_provider_key_fails_before_a_request(monkeypatch) -> None:

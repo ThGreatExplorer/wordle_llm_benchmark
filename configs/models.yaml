@@ -18,23 +18,26 @@ models:
     input_price_per_million: 5
     output_price_per_million: 30
   qwen3_8b: &qwen
-    provider: openai_compatible
+    provider: openrouter
     base_url: https://openrouter.ai/api/v1
     api_key_env: OPENROUTER_API_KEY
     model: qwen/qwen3-8b
+    upstream_provider: alibaba
+    allow_fallbacks: false
+    require_parameters: true
+    reasoning_effort: none
     temperature: 0
     input_price_per_million: 0.117
     output_price_per_million: 0.455
-    extra_body:
-      reasoning: {effort: none}
-      provider: {require_parameters: true}
   qwen3_14b:
     <<: *qwen
     model: qwen/qwen3-14b
+    upstream_provider: deepinfra
     input_price_per_million: 0.12
     output_price_per_million: 0.24
   qwen3_32b:
     <<: *qwen
     model: qwen/qwen3-32b
+    upstream_provider: deepinfra
     input_price_per_million: 0.08
     output_price_per_million: 0.28

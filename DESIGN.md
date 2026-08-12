@@ -55,7 +55,7 @@ Do not hard-code provider-specific model IDs into game logic. Put exact model id
 
 For the main benchmark, use direct/non-thinking or the lowest practical reasoning mode so that inference-time reasoning budgets are not intentionally varied across families. Record the exact inference configuration for every run.
 
-All Qwen tracks MUST run through OpenRouter's OpenAI-compatible Chat Completions endpoint. Use the frozen OpenRouter model slugs `qwen/qwen3-8b`, `qwen/qwen3-14b`, and `qwen/qwen3-32b`. Qwen3 4B is not part of the benchmark because it is not available in the selected OpenRouter deployment. Disable reasoning/thinking through OpenRouter's normalized reasoning configuration and require routed providers to support every requested parameter, including structured outputs. Record the returned model and provider metadata available from each response.
+All Qwen tracks MUST run through the dedicated stateless OpenRouter adapter using its OpenAI-compatible Chat Completions endpoint. Use the frozen OpenRouter model slugs `qwen/qwen3-8b`, `qwen/qwen3-14b`, and `qwen/qwen3-32b`. Final evaluation pins Alibaba (`alibaba`) for 8B and DeepInfra (`deepinfra`) for 14B and 32B. Disable fallbacks, require routed providers to support every requested parameter including structured outputs, and disable reasoning with effort `none`. Record the actual returned model and upstream provider metadata for every response.
 
 ---
 
@@ -516,6 +516,8 @@ class ModelResponse:
     latency_ms: float
     provider_request_id: str | None
     model_returned: str | None
+    provider_returned: str | None
+    provider_metadata: dict | None
     protocol_error: str | None
 
 class ModelAdapter(Protocol):
@@ -528,10 +530,11 @@ Implement at least:
 ```text
 providers/openai_responses.py
 providers/openai_compatible.py
+providers/openrouter.py
 providers/mock.py
 ```
 
-`openai_compatible.py` targets OpenRouter for the Qwen tracks. Keep the base URL and model slug configurable, but do not use locally hosted Qwen models in the primary benchmark.
+`openrouter.py` is the dedicated Qwen adapter. Its model, upstream provider, routing controls, and base URL remain explicit configuration, while every request is stateless. `openai_compatible.py` is only the shared transport implementation; do not use it directly for primary Qwen runs or use locally hosted Qwen models.
 
 ### Provider responsibilities
 
@@ -588,14 +591,17 @@ models:
     reasoning_effort: <none/direct mode if supported>
 
   qwen3_8b:
-    provider: openai_compatible
+    provider: openrouter
     base_url: https://openrouter.ai/api/v1
     model: qwen/qwen3-8b
+    upstream_provider: alibaba
+    allow_fallbacks: false
+    require_parameters: true
+    reasoning_effort: none
     temperature: 0
-    thinking: false
 ```
 
-Repeat for Qwen3 14B and 32B using their exact OpenRouter slugs.
+Repeat for Qwen3 14B and 32B using their exact OpenRouter slugs and pin `deepinfra` as the upstream provider.
 
 Do not assume deterministic inference merely because temperature is zero. Record configuration and treat the 150 frozen instances as the experimental sample. If a provider exposes a request seed, it may be recorded/used, but the benchmark must not rely on it for correctness.
 
@@ -1155,7 +1161,8 @@ wordle-llm-benchmark/
 │   │   ├── base.py
 │   │   ├── mock.py
 │   │   ├── openai_responses.py
-│   │   └── openai_compatible.py
+│   │   ├── openai_compatible.py
+│   │   └── openrouter.py
 │   │
 │   ├── experiment/
 │   │   ├── runner.py
@@ -1302,7 +1309,7 @@ provider/model identifiers
 pricing config used
 ```
 
-For OpenRouter Qwen runs, additionally record the requested model slug, returned model identifier, routing/provider metadata when available, pricing configuration, and reasoning mode.
+For OpenRouter Qwen runs, opt into router metadata on every request and additionally record the requested model slug, configured upstream provider slug, returned model identifier, actual returned upstream provider, complete router-attempt metadata for every response, fallback/parameter-routing settings, pricing configuration, and reasoning mode.
 
 ---
 
@@ -1374,7 +1381,7 @@ Do NOT add these unless the core benchmark is complete:
 
 ## 29. Frozen Qwen deployment decision
 
-The primary benchmark uses OpenRouter exclusively for Qwen3 8B, 14B, and 32B. Do not substitute local serving, another aggregator, a newer Qwen generation, or Qwen3 4B without creating a new benchmark version and rerunning all affected comparisons. Fine-tuning remains outside the MVP.
+The primary benchmark uses OpenRouter exclusively for Qwen3 8B, 14B, and 32B. Do not substitute another deployment or Qwen generation without creating a new benchmark version and rerunning all affected comparisons. Fine-tuning remains outside the MVP.
 
 ---
 

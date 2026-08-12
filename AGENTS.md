@@ -389,6 +389,8 @@ Credentials come from environment variables or secret management. Never commit k
 
 Exact provider model IDs and prices belong in configuration, not game logic.
 
+Qwen tracks must use the dedicated stateless OpenRouter adapter. Final evaluation pins `alibaba` for Qwen3 8B and `deepinfra` for Qwen3 14B/32B, disables fallbacks, requires all requested parameters, and sets reasoning effort to `none`. Opt into router metadata and record the returned upstream provider, model, and complete router-attempt metadata on every proposal; do not substitute direct generic-adapter or local-vLLM execution.
+
 ---
 
 ## Retry semantics
@@ -588,7 +590,7 @@ Unless explicitly requested after the base benchmark works, do not add:
 - feedback-label ablations;
 - automatic fallback to top-2/top-3 guesses.
 
-Qwen3 4B and fine-tuning are not part of the MVP.
+Fine-tuning is not part of the MVP.
 
 ---
 

@@ -10,6 +10,20 @@ from benchmark.providers.openai_responses import TOP_THREE_SCHEMA
 from benchmark.types import ModelResponse
 
 
+def _response_field(response: Any, name: str) -> Any:
+    value = getattr(response, name, None)
+    if value is not None:
+        return value
+    return (getattr(response, "model_extra", None) or {}).get(name)
+
+
+def _routed_field(metadata: Any, name: str) -> Any:
+    if not isinstance(metadata, dict):
+        return None
+    attempts = metadata.get("attempts") or []
+    return attempts[-1].get(name) if attempts and isinstance(attempts[-1], dict) else None
+
+
 class OpenAICompatibleAdapter:
     def __init__(
         self,
@@ -19,11 +33,13 @@ class OpenAICompatibleAdapter:
         api_key: str = "not-required",
         temperature: float = 0,
         extra_body: dict[str, Any] | None = None,
+        extra_headers: dict[str, str] | None = None,
         client: Any | None = None,
     ) -> None:
         self.model = model
         self.temperature = temperature
         self.extra_body = extra_body
+        self.extra_headers = extra_headers
         self.client = client or AsyncOpenAI(
             api_key=api_key, base_url=base_url, max_retries=3, timeout=120.0
         )
@@ -40,6 +56,8 @@ class OpenAICompatibleAdapter:
         }
         if self.extra_body:
             request["extra_body"] = self.extra_body
+        if self.extra_headers:
+            request["extra_headers"] = self.extra_headers
         started = time.perf_counter()
         response = await self.client.chat.completions.create(**request)
         latency = (time.perf_counter() - started) * 1000
@@ -47,6 +65,7 @@ class OpenAICompatibleAdapter:
         guesses = parse_top_three(raw)
         usage = getattr(response, "usage", None)
         details = getattr(usage, "completion_tokens_details", None)
+        provider_metadata = _response_field(response, "openrouter_metadata")
         return ModelResponse(
             raw_text=raw,
             guesses=guesses,
@@ -55,7 +74,8 @@ class OpenAICompatibleAdapter:
             reasoning_tokens=getattr(details, "reasoning_tokens", None),
             latency_ms=latency,
             provider_request_id=getattr(response, "_request_id", None),
-            model_returned=getattr(response, "model", None),
-            provider_returned=getattr(response, "provider", None),
+            model_returned=_routed_field(provider_metadata, "model") or _response_field(response, "model"),
+            provider_returned=_routed_field(provider_metadata, "provider") or _response_field(response, "provider"),
+            provider_metadata=provider_metadata,
             protocol_error=None if guesses is not None else "PROTOCOL_ERROR",
         )

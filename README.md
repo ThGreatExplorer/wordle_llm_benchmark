@@ -279,6 +279,11 @@ OpenRouter's OpenAI-compatible endpoint; local model serving is not part of this
 benchmark. Each request is stateless, and the runner never passes a conversation
 or previous-response ID.
 
+Final evaluation pins Alibaba for Qwen3 8B and DeepInfra for Qwen3 14B/32B.
+Fallbacks are disabled, requested parameters are mandatory, and reasoning effort
+is `none`. Every request opts into OpenRouter router metadata; each proposal records
+the returned model, actual upstream provider, and complete routing attempts.
+
 Results are append-only JSONL under `results/<run-id>/`. Reusing the same run ID
 skips completed model/condition/game keys and rejects changed run metadata.
 Because usage is known only after a response, concurrent cost guarding can exceed
@@ -477,10 +482,12 @@ For the primary benchmark, use direct/non-thinking or the lowest practical reaso
 
 ## Qwen execution
 
-Qwen models run through OpenRouter's hosted OpenAI-compatible API. Local serving
-and other aggregators are outside the frozen benchmark protocol.
+Qwen models run through the dedicated stateless OpenRouter adapter. Local serving,
+direct use of the generic compatible adapter, and other aggregators are outside
+the frozen benchmark protocol. Upstream provider pins and routing controls live in
+`configs/models.yaml`.
 
-The frozen Qwen scaling comparison is Qwen3 8B → 14B → 32B, with all three routed through OpenRouter. Qwen3 4B is excluded because it is unavailable in the selected deployment.
+The frozen Qwen scaling comparison is Qwen3 8B → 14B → 32B, with all three routed through OpenRouter.
 
 ---
 
@@ -504,7 +511,7 @@ pricing configuration
 host/platform metadata
 ```
 
-For OpenRouter Qwen runs, also record requested and returned model identifiers, routing/provider metadata when available, pricing configuration, and reasoning mode.
+For OpenRouter Qwen runs, also record requested and returned model identifiers, the configured provider pin, the actual upstream provider and complete router-attempt metadata on every response, fallback/parameter-routing settings, pricing configuration, and reasoning mode.
 
 Raw results should be treated as immutable experiment artifacts. Analysis should read raw logs and write derived tables/figures separately rather than mutating the original records.
 

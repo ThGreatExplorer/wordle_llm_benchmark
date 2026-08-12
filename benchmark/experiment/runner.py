@@ -33,6 +33,7 @@ class ProposalRecord:
     provider_request_id: str | None
     returned_model_id: str | None
     returned_provider: str | None
+    provider_metadata: dict | None
     accepted_guess: str | None = None
     feedback: tuple[str, ...] | None = None
     candidate_count_after: int | None = None
@@ -119,6 +120,7 @@ def _record(
         response.input_tokens, response.output_tokens, response.reasoning_tokens,
         response.latency_ms, cost, response.provider_request_id, response.model_returned,
         response.provider_returned,
+        response.provider_metadata,
     )
 
 
