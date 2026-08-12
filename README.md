@@ -259,6 +259,32 @@ wordle-llm-benchmark/
 
 See `DESIGN.md` for the detailed module responsibilities.
 
+## Running a provider development slice
+
+Install dependencies with `uv sync`, copy `.env.example` to your environment, and
+set the relevant API key. Provider calls happen only through the explicit `run`
+command:
+
+```bash
+uv run python -m benchmark run \
+  --model gpt4o \
+  --condition hist_named \
+  --split dev \
+  --run-id dev-gpt4o \
+  --concurrency 1 \
+  --max-cost-usd 1
+```
+
+For Qwen, update `base_url` in `configs/models.yaml` to the OpenAI-compatible
+server and set `QWEN_API_KEY` when the endpoint requires one. Each request is
+stateless; the runner never passes a conversation or previous-response ID.
+
+Results are append-only JSONL under `results/<run-id>/`. Reusing the same run ID
+skips completed model/condition/game keys and rejects changed run metadata.
+Because usage is known only after a response, concurrent cost guarding can exceed
+the limit by at most one batch (`--concurrency` games); use concurrency 1 for the
+tightest budget control.
+
 ---
 
 ## Requirements

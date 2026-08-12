@@ -1,4 +1,5 @@
 master_seed: 20260301
 answers: data/frozen/wordle_answers_2022.txt
+extra_guesses: data/frozen/wordle_extra_guesses_2022.txt
 dynamic_vocabulary: data/frozen/dynamic_master_5letter.txt
 manifests: data/manifests

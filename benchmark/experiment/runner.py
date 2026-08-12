@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+from datetime import datetime, timezone
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
@@ -23,6 +24,13 @@ class ProposalRecord:
     candidate_count_before: int
     information_gain: tuple[float | None, ...]
     ig_star: float
+    input_tokens: int | None
+    output_tokens: int | None
+    reasoning_tokens: int | None
+    latency_ms: float
+    estimated_cost_usd: float | None
+    provider_request_id: str | None
+    returned_model_id: str | None
     accepted_guess: str | None = None
     feedback: tuple[str, ...] | None = None
     candidate_count_after: int | None = None
@@ -38,6 +46,11 @@ class GameSummary:
     repair_attempt_count: int
     repair_success_count: int
     forfeit_count: int
+    input_tokens_total: int
+    output_tokens_total: int
+    reasoning_tokens_total: int
+    estimated_cost_usd_total: float
+    latency_ms_total: float
 
 
 @dataclass(frozen=True)
@@ -50,11 +63,12 @@ class GameResult:
 def append_result(
     proposal_path: Path, summary_path: Path, result: GameResult, metadata: dict[str, str]
 ) -> None:
+    timestamp = datetime.now(timezone.utc).isoformat()
     with proposal_path.open("a") as proposals:
         for proposal in result.proposals:
-            proposals.write(json.dumps(metadata | asdict(proposal), separators=(",", ":")) + "\n")
+            proposals.write(json.dumps(metadata | {"timestamp_utc": timestamp} | asdict(proposal), separators=(",", ":")) + "\n")
     with summary_path.open("a") as summaries:
-        summaries.write(json.dumps(metadata | asdict(result.summary), separators=(",", ":")) + "\n")
+        summaries.write(json.dumps(metadata | {"timestamp_utc": timestamp} | asdict(result.summary), separators=(",", ":")) + "\n")
 
 
 def _evaluate(
@@ -79,20 +93,33 @@ def _evaluate(
 def _record(
     response: ModelResponse, evaluations: tuple[GuessEvaluation, ...], prompt: str,
     proposal_type: str, decision_round: int, state: GameState,
-    feasible: tuple[str, ...],
+    feasible: tuple[str, ...], input_price: float, output_price: float, reasoning_price: float,
 ) -> ProposalRecord:
     valid_legal = filter_candidates(state.legal_guesses, state.history)
     gains = tuple(
         information_gain(item.normalized, feasible) if item.valid else None for item in evaluations
     )
+    cost = None
+    if response.input_tokens is not None or response.output_tokens is not None or response.reasoning_tokens is not None:
+        cost = (
+            (response.input_tokens or 0) * input_price
+            + (response.output_tokens or 0) * output_price
+            + (response.reasoning_tokens or 0) * reasoning_price
+        ) / 1_000_000
     return ProposalRecord(
         decision_round, proposal_type, response.raw_text, evaluations, response.protocol_error,
         hashlib.sha256(prompt.encode()).hexdigest(), len(feasible), gains,
         best_information_gain(valid_legal, feasible),
+        response.input_tokens, response.output_tokens, response.reasoning_tokens,
+        response.latency_ms, cost, response.provider_request_id, response.model_returned,
     )
 
 
-async def run_game(adapter: ModelAdapter, condition: Condition, state: GameState) -> GameResult:
+async def run_game(
+    adapter: ModelAdapter, condition: Condition, state: GameState, *,
+    input_price_per_million: float = 0, output_price_per_million: float = 0,
+    reasoning_price_per_million: float = 0,
+) -> GameResult:
     proposals: list[ProposalRecord] = []
     initial_invalid = repairs = repair_successes = forfeits = 0
 
@@ -103,7 +130,8 @@ async def run_game(adapter: ModelAdapter, condition: Condition, state: GameState
         evaluations = _evaluate(response, state, condition, decision_round)
         top1 = evaluations[0] if evaluations else None
         proposals.append(_record(response, evaluations, prompt, "initial", decision_round,
-                                 state, feasible_before))
+                                 state, feasible_before, input_price_per_million,
+                                 output_price_per_million, reasoning_price_per_million))
 
         if top1 is None or not top1.valid:
             initial_invalid += 1
@@ -115,7 +143,8 @@ async def run_game(adapter: ModelAdapter, condition: Condition, state: GameState
             evaluations = _evaluate(response, state, condition, decision_round)
             top1 = evaluations[0] if evaluations else None
             proposals.append(_record(response, evaluations, prompt, "repair", decision_round,
-                                     state, feasible_before))
+                                     state, feasible_before, input_price_per_million,
+                                     output_price_per_million, reasoning_price_per_million))
             if top1 is None or not top1.valid:
                 forfeits += 1
                 continue
@@ -134,6 +163,13 @@ async def run_game(adapter: ModelAdapter, condition: Condition, state: GameState
 
     solved = state.solved
     solve_round = state.history[-1].decision_round if solved else None
-    summary = GameSummary(solved, solve_round, solve_round or 7, len(state.history), initial_invalid,
-                          repairs, repair_successes, forfeits)
+    summary = GameSummary(
+        solved, solve_round, solve_round or 7, len(state.history), initial_invalid,
+        repairs, repair_successes, forfeits,
+        sum(item.input_tokens or 0 for item in proposals),
+        sum(item.output_tokens or 0 for item in proposals),
+        sum(item.reasoning_tokens or 0 for item in proposals),
+        sum(item.estimated_cost_usd or 0 for item in proposals),
+        sum(item.latency_ms for item in proposals),
+    )
     return GameResult(tuple(proposals), summary, state)

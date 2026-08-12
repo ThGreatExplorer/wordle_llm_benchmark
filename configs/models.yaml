@@ -1,0 +1,35 @@
+models:
+  gpt4o:
+    provider: openai
+    model: gpt-4o-2024-08-06
+    temperature: 0
+    input_price_per_million: 2.5
+    output_price_per_million: 10
+  gpt5:
+    provider: openai
+    model: gpt-5-2025-08-07
+    reasoning_effort: minimal
+    input_price_per_million: 1.25
+    output_price_per_million: 10
+  gpt56:
+    provider: openai
+    model: gpt-5.6-sol
+    reasoning_effort: none
+    input_price_per_million: 5
+    output_price_per_million: 30
+  qwen3_4b: &qwen
+    provider: openai_compatible
+    base_url: http://localhost:8000/v1
+    api_key_env: QWEN_API_KEY
+    model: Qwen/Qwen3-4B
+    temperature: 0
+    extra_body: {chat_template_kwargs: {enable_thinking: false}}
+  qwen3_8b:
+    <<: *qwen
+    model: Qwen/Qwen3-8B
+  qwen3_14b:
+    <<: *qwen
+    model: Qwen/Qwen3-14B
+  qwen3_32b:
+    <<: *qwen
+    model: Qwen/Qwen3-32B
