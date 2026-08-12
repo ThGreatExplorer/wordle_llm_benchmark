@@ -27,6 +27,25 @@ If even one label differs for any previous row, the proposed word is invalid.
 
 You must check every previous accepted row, not only the most recent one.
 
+CONSISTENCY EXAMPLE
+
+Suppose a previous accepted row is:
+
+Guess: ABCDE
+Feedback: EXACT ABSENT PRESENT ABSENT ABSENT
+
+Then any later valid proposal must:
+- have A in position 1;
+- not contain B, D, or E;
+- contain C somewhere other than position 3;
+- also satisfy every other previous feedback row.
+
+A proposal that violates even one of these requirements is invalid.
+
+The letter strings in this example illustrate consistency logic only and are not legal guesses for the game.
+
+Never propose an already accepted guess again unless its recorded feedback was EXACT EXACT EXACT EXACT EXACT. Repeating a previously accepted unsolved guess cannot satisfy the strict consistency rule.
+
 Only your first-ranked guess will actually be played. The second and third guesses are alternate recommendations, but they must also be valid under all of the same rules.
 
 Before answering, silently verify each of your three proposed guesses against every previous accepted feedback row.

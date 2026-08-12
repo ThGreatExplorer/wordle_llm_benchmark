@@ -302,7 +302,7 @@ A historical legal guess may be a non-answer word, but it still must be fully co
 
 Use one canonical output contract and nearly identical rules across conditions. The purpose of `hist_named` versus `hist_unnamed` is to isolate recognition of the task name, not to change the underlying explanation.
 
-The frozen prompt version is `prompt-v3`. Development runs with prompt-v2 showed that models frequently interpreted "fully consistent" differently from the benchmark's deterministic validator. Prompt-v3 therefore defines strict consistency operationally without changing the underlying validity rule or providing strategy assistance.
+The frozen prompt version is `prompt-v4`. Development runs with prompt-v2 showed that models frequently interpreted "fully consistent" differently from the benchmark's deterministic validator. Prompt-v3 therefore defined strict consistency operationally without changing the underlying validity rule or providing strategy assistance. Prompt-v4 keeps that specification unchanged and adds one compact symbolic consistency example as the final prompt ablation.
 
 ### 10.1 Common output instruction
 
@@ -346,6 +346,25 @@ For every previous accepted row, the five feedback labels produced in this check
 If even one label differs for any previous row, the proposed word is invalid.
 
 You must check every previous accepted row, not only the most recent one.
+
+CONSISTENCY EXAMPLE
+
+Suppose a previous accepted row is:
+
+Guess: ABCDE
+Feedback: EXACT ABSENT PRESENT ABSENT ABSENT
+
+Then any later valid proposal must:
+- have A in position 1;
+- not contain B, D, or E;
+- contain C somewhere other than position 3;
+- also satisfy every other previous feedback row.
+
+A proposal that violates even one of these requirements is invalid.
+
+The letter strings in this example illustrate consistency logic only and are not legal guesses for the game.
+
+Never propose an already accepted guess again unless its recorded feedback was EXACT EXACT EXACT EXACT EXACT. Repeating a previously accepted unsolved guess cannot satisfy the strict consistency rule.
 
 Only your first-ranked guess will actually be played. The second and third guesses are alternate recommendations, but they must also be valid under all of the same rules.
 

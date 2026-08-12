@@ -57,7 +57,7 @@ def test_cli_runs_one_mock_game_from_frozen_dev_manifest(tmp_path, monkeypatch, 
     metadata = json.loads((output / "metadata.json").read_text())
     assert capsys.readouterr().out == "completed 1 game\n"
     assert summary["solved"] and summary["game_id"] == "dynamic_dev_0000"
-    assert proposal["prompt_version"] == "prompt-v3"
+    assert proposal["prompt_version"] == "prompt-v4"
     assert {
         "run_id", "started_at_utc", "git_commit", "benchmark_version", "prompt_version",
         "manifest_hashes", "word_list_hashes", "models_config_hash", "benchmark_config_hash",

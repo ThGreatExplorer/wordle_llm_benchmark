@@ -13,8 +13,8 @@ def state(pool: tuple[str, ...] = ("crane", "slate", "trace")) -> GameState:
     return result
 
 
-def test_prompt_version_is_v3() -> None:
-    assert PROMPT_VERSION == "prompt-v3"
+def test_prompt_version_is_v4() -> None:
+    assert PROMPT_VERSION == "prompt-v4"
 
 
 @pytest.mark.parametrize("condition", [Condition.HIST_UNNAMED, Condition.DYNAMIC_256])
@@ -41,8 +41,32 @@ def test_named_and_unnamed_have_equivalent_strict_semantics() -> None:
         "Only your first-ranked guess will actually be played",
         "second and third guesses",
         "silently verify each of your three proposed guesses",
+        "Guess: ABCDE",
+        "Feedback: EXACT ABSENT PRESENT ABSENT ABSENT",
+        "Never propose an already accepted guess again unless its recorded feedback was EXACT EXACT EXACT EXACT EXACT",
     ):
         assert phrase in named and phrase in unnamed
+
+
+def test_symbolic_consistency_example_is_identical_across_conditions() -> None:
+    prompts = [instructional_prose(condition) for condition in Condition]
+    example = """CONSISTENCY EXAMPLE
+
+Suppose a previous accepted row is:
+
+Guess: ABCDE
+Feedback: EXACT ABSENT PRESENT ABSENT ABSENT
+
+Then any later valid proposal must:
+- have A in position 1;
+- not contain B, D, or E;
+- contain C somewhere other than position 3;
+- also satisfy every other previous feedback row.
+
+A proposal that violates even one of these requirements is invalid.
+
+The letter strings in this example illustrate consistency logic only and are not legal guesses for the game."""
+    assert all(prompt.count(example) == 1 for prompt in prompts)
 
 
 def test_dynamic_prompt_rejects_wrong_pool_size() -> None:
