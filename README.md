@@ -518,6 +518,23 @@ For Hugging Face/Nscale Qwen runs, also record the gateway, exact `:nscale` requ
 
 Raw results should be treated as immutable experiment artifacts. Analysis should read raw logs and write derived tables/figures separately rather than mutating the original records.
 
+Run deterministic aggregation for one run directory with:
+
+```bash
+uv run python -m benchmark analyze \
+  --results results/<run-id> \
+  --output results/<run-id>/analysis
+```
+
+The command writes CSV and Parquet metric, constraint-age, and paired-contrast
+tables plus SVG plots. Confidence intervals use 10,000 deterministic bootstrap
+resamples by default; use `--seed` or `--bootstrap-resamples` explicitly when a
+different recorded analysis configuration is required.
+
+Open `analysis/dashboard.html` directly in a browser for interactive model,
+condition, and metric filters, confidence-interval charts, clue-age curves, and
+sortable result tables. The dashboard is self-contained and makes no network calls.
+
 ---
 
 ## Development vs. evaluation data

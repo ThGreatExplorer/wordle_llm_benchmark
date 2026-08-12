@@ -14,6 +14,7 @@ from pathlib import Path
 import yaml
 
 from benchmark.experiment.manifests import generate_manifests, load_game_states, load_words
+from benchmark.analysis import analyze_results
 from benchmark import BENCHMARK_VERSION, PROMPT_VERSION
 from benchmark.experiment.batch import run_batch
 from benchmark.providers import HuggingFaceNscaleAdapter, MockAdapter, OpenAIResponsesAdapter
@@ -114,6 +115,11 @@ def main() -> None:
     mock.add_argument("--condition", type=Condition, choices=list(Condition), default=Condition.DYNAMIC_256)
     mock.add_argument("--run-id", required=True)
     mock.add_argument("--results", type=Path, default=Path("results"))
+    analyze = subparsers.add_parser("analyze")
+    analyze.add_argument("--results", type=Path, required=True)
+    analyze.add_argument("--output", type=Path)
+    analyze.add_argument("--bootstrap-resamples", type=_positive_int, default=10_000)
+    analyze.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
     if args.command == "generate-manifests":
         config = yaml.safe_load(args.config.read_text())
@@ -206,3 +212,7 @@ def main() -> None:
                       "provider": "mock", "requested_model_id": "deterministic-secret"},
         ))
         print(f"completed {len(results)} game")
+    elif args.command == "analyze":
+        output = args.output or args.results / "analysis"
+        analyze_results(args.results, output, resamples=args.bootstrap_resamples, seed=args.seed)
+        print(f"analysis written to {output}")
