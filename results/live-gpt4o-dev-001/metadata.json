@@ -1,0 +1,31 @@
+{
+  "benchmark_config_hash": "7939d5c452d6417c7f52db28f4e63d83895a1dc8573c21450f7143ffef6eb80e",
+  "benchmark_version": "mvp-v2",
+  "git_commit": "a32110da0a39710358de25d1118b3cb959d88efb",
+  "lock_hash": "98647b1dd719be4cb31edc503ea5bb5bbf18639fd4b0f0de5cbff78445e668ce",
+  "manifest_hashes": {
+    "dev_dynamic.jsonl": "6e93a8debde88562ff32735fceda4c9a875e6a9d4186c0d173bc82528c8467bc",
+    "dev_historical.jsonl": "dc941e3d9cd87d3124957f45898de258d046421219c10098ce0c603492e5e15f",
+    "eval_dynamic.jsonl": "d309ae4704863b6651185c9d12f4df22e79b7086269daeeac5433af2f2e83b38",
+    "eval_historical.jsonl": "49af93d015b3e7a1c83aba1832136dc2b4da6dafe1ca94b26ba7b16989d5acf3"
+  },
+  "models_config_hash": "9a2039b8f7ded327bfa467a8aeecfb3a133789223edd9f6ab6eeb8ac8ef21091",
+  "platform": "Linux-7.1.5-arch1-2-x86_64-with-glibc2.44",
+  "prompt_version": "prompt-v2",
+  "python": "3.11.14 (main, Dec 17 2025, 21:07:37) [Clang 21.1.4 ]",
+  "run_id": "live-gpt4o-dev-001",
+  "selected_manifest": "dev_dynamic.jsonl",
+  "selected_model_config": {
+    "input_price_per_million": 2.5,
+    "model": "gpt-4o-2024-08-06",
+    "output_price_per_million": 10,
+    "provider": "openai",
+    "temperature": 0
+  },
+  "started_at_utc": "2026-08-12T04:03:11.091716+00:00",
+  "word_list_hashes": {
+    "answers": "5209b35f823f8b80f0404f863bd80df06d6a966c6eb1016d69f38badc6eed5d0",
+    "dynamic_vocabulary": "eb550131f527dfa497d98189256ed7a9eeea7129579f78d924073b51e10ed126",
+    "extra_guesses": "99be2e38dadf3e26952af7cb4d963f65b632d5de91aa99e5ce308e4dc9617b65"
+  }
+}
