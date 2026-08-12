@@ -366,7 +366,7 @@ Every new guess must be a legal five-letter English guess for this game and must
 Return exactly three ranked next guesses, from best to worst, using the required JSON format. Do not include explanation.
 ```
 
-Never use the words `Wordle`, `green`, `yellow`, `gray`, `NYT`, or `hard mode` in this condition.
+The frozen instructional prose must not use the words `Wordle`, `green`, `yellow`, `gray`, `NYT`, or `hard mode`. Lexical payloads such as candidate lists, accepted guesses, and rejected proposals are preserved verbatim and are excluded from this contamination check.
 
 ### 10.4 Dynamic-256 prompt
 
@@ -1227,7 +1227,7 @@ Verify:
 
 ### 25.4 Prompt tests
 
-Automatically assert that `hist_unnamed` and `dynamic_256` contain none of these banned strings case-insensitively:
+Automatically assert that the instructional prose for `hist_unnamed` and `dynamic_256` contains none of these banned strings case-insensitively:
 
 ```text
 wordle
@@ -1239,6 +1239,8 @@ nyt
 new york times
 hard mode
 ```
+
+Do not apply this assertion to lexical payloads. Assert separately that candidate lists, accepted guesses, and rejected proposals are reproduced verbatim.
 
 Assert that named/unnamed historical prompts otherwise share the same feedback semantics and output contract.
 

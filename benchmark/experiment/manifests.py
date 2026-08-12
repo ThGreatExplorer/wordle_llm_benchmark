@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+from collections.abc import Iterable
 from pathlib import Path
 
 from benchmark import BENCHMARK_VERSION
+from benchmark.types import Condition, GameState
 
 
 def stable_seed(master_seed: int, *labels: str) -> int:
@@ -47,13 +49,15 @@ def _dynamic(words: tuple[str, ...], count: int, seed: int, split: str) -> list[
     return records
 
 
-def _write_jsonl(path: Path, records: list[dict]) -> None:
+def _write_jsonl(path: Path, records: list[dict], force: bool) -> None:
+    if path.exists() and not force:
+        raise FileExistsError(f"{path} exists; pass force=True to overwrite")
     path.write_text("".join(json.dumps(record, separators=(",", ":")) + "\n" for record in records))
 
 
 def generate_manifests(
     answers: tuple[str, ...], dynamic_words: tuple[str, ...], output: Path, master_seed: int,
-    dev_count: int = 10, eval_count: int = 150,
+    dev_count: int = 10, eval_count: int = 150, force: bool = False,
 ) -> dict[str, str]:
     if len(answers) < dev_count + eval_count:
         raise ValueError("historical answer list is too small")
@@ -75,9 +79,32 @@ def generate_manifests(
         "dev_dynamic": _dynamic(dynamic_words, dev_count, master_seed, "dev"),
         "eval_dynamic": _dynamic(dynamic_words, eval_count, master_seed, "eval"),
     }
+    targets = tuple(output / f"{name}.jsonl" for name in datasets)
+    existing = tuple(path for path in targets if path.exists())
+    if existing and not force:
+        raise FileExistsError(f"refusing to overwrite: {', '.join(map(str, existing))}; pass force=True")
     hashes = {}
     for name, records in datasets.items():
         path = output / f"{name}.jsonl"
-        _write_jsonl(path, records)
+        _write_jsonl(path, records, force)
         hashes[name] = file_sha256(path)
     return hashes
+
+
+def load_game_states(
+    manifest: Path,
+    condition: Condition,
+    answers: Iterable[str],
+    extra_guesses: Iterable[str],
+) -> tuple[tuple[str, GameState], ...]:
+    records = tuple(json.loads(line) for line in manifest.read_text().splitlines())
+    if any(row.get("benchmark_version") != BENCHMARK_VERSION for row in records):
+        raise ValueError(f"{manifest} has the wrong benchmark version")
+    if condition is Condition.DYNAMIC_256:
+        return tuple(
+            (row["game_id"], GameState(row["secret"], tuple(row["pool"]), tuple(row["pool"])))
+            for row in records
+        )
+    secrets = tuple(answers)
+    legal = tuple(dict.fromkeys((*secrets, *extra_guesses)))
+    return tuple((row["game_id"], GameState(row["secret"], secrets, legal)) for row in records)

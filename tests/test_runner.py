@@ -12,6 +12,21 @@ def test_parser_preserves_strings_and_rejects_bad_protocol() -> None:
     assert parse_top_three("not json") is None
 
 
+def test_summary_logs_protocol_and_each_guess_error_class() -> None:
+    adapter = MockAdapter([
+        "not json", ["xxxxxx", "zzzzz", "crane"],
+        ["crane", "other", "trace"], ["slate", "crane", "trace"],
+    ])
+    result = asyncio.run(run_game(
+        adapter, Condition.HIST_NAMED,
+        GameState("slate", ("slate", "crane", "trace"), ("slate", "crane", "trace", "other")),
+    ))
+    assert result.summary.protocol_error_count == 1
+    assert result.summary.format_error_count == 1
+    assert result.summary.lexicon_error_count == 1
+    assert result.summary.constraint_error_count >= 1
+
+
 def test_repair_forfeit_and_session_isolation() -> None:
     adapter = MockAdapter([
         ["xxxxxx", "trace", "crane"], ["zzzzz", "trace", "crane"],
@@ -38,6 +53,7 @@ def test_valid_repair_and_six_round_loss(tmp_path) -> None:
                                   GameState("slate", ("slate", "crane"), ("slate", "crane"))))
     assert not result.summary.solved and result.summary.round_score == 7
     assert result.summary.accepted_guess_count == 0 and result.summary.forfeit_count == 6
+    assert result.summary.lexicon_error_count == 24
     proposal_path, summary_path = tmp_path / "proposals.jsonl", tmp_path / "summaries.jsonl"
     append_result(proposal_path, summary_path, result, {"run_id": "test", "game_id": "game"})
     assert len(proposal_path.read_text().splitlines()) == 12

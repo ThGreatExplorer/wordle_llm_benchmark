@@ -330,7 +330,7 @@ Prompt text is part of the benchmark and therefore versioned experimental materi
 
 Prompt builders must be deterministic for a given state.
 
-`hist_unnamed` and `dynamic_256` must not contain, case-insensitively:
+The instructional prose for `hist_unnamed` and `dynamic_256` must not contain, case-insensitively:
 
 ```text
 wordle
@@ -342,6 +342,8 @@ nyt
 new york times
 hard mode
 ```
+
+Do not filter or rewrite lexical payloads to satisfy this check. Candidate words, accepted guesses, and rejected proposals must remain verbatim and are tested separately from instructional prose.
 
 Do not casually rewrite prompts while debugging model behavior. Prompt debugging occurs on development manifests only.
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+from collections import Counter
 from datetime import datetime, timezone
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -47,6 +48,10 @@ class GameSummary:
     repair_attempt_count: int
     repair_success_count: int
     forfeit_count: int
+    protocol_error_count: int
+    format_error_count: int
+    lexicon_error_count: int
+    constraint_error_count: int
     input_tokens_total: int
     output_tokens_total: int
     reasoning_tokens_total: int
@@ -165,9 +170,18 @@ async def run_game(
 
     solved = state.solved
     solve_round = state.history[-1].decision_round if solved else None
+    errors = Counter(
+        evaluation.status
+        for proposal in proposals
+        for evaluation in proposal.evaluations
+        if not evaluation.valid
+    )
     summary = GameSummary(
         solved, solve_round, solve_round or 7, len(state.history), initial_invalid,
         repairs, repair_successes, forfeits,
+        sum(proposal.protocol_error is not None for proposal in proposals),
+        errors[GuessStatus.FORMAT_ERROR], errors[GuessStatus.LEXICON_ERROR],
+        errors[GuessStatus.CONSTRAINT_ERROR],
         sum(item.input_tokens or 0 for item in proposals),
         sum(item.output_tokens or 0 for item in proposals),
         sum(item.reasoning_tokens or 0 for item in proposals),

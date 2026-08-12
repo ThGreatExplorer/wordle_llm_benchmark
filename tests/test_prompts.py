@@ -2,7 +2,7 @@ import pytest
 
 from benchmark.engine.feedback import score
 from benchmark.prompts import build_prompt
-from benchmark.prompts.builders import BANNED
+from benchmark.prompts.builders import BANNED, instructional_prose
 from benchmark.types import Condition, GameState
 
 
@@ -16,7 +16,7 @@ def state(pool: tuple[str, ...] = ("crane", "slate", "trace")) -> GameState:
 def test_unnamed_prompts_are_clean_and_complete(condition: Condition) -> None:
     pool = tuple(f"a{n:04d}" for n in range(256)) if condition is Condition.DYNAMIC_256 else ("crane", "slate")
     prompt = build_prompt(condition, state(pool), 2)
-    assert not any(term in prompt.lower() for term in BANNED)
+    assert not any(term in instructional_prose(condition).lower() for term in BANNED)
     assert "crane:" in prompt and "Current decision round: 2" in prompt
     if condition is Condition.DYNAMIC_256:
         assert " ".join(pool) in prompt
@@ -33,8 +33,14 @@ def test_repair_only_reveals_rejected_guess_and_class() -> None:
     assert "violated" not in prompt.lower()
 
 
-def test_banned_legal_guess_is_letter_spaced_in_unnamed_history() -> None:
+def test_lexical_payload_is_preserved_verbatim() -> None:
     result = GameState("slate", ("slate",), ("grays", "slate"))
     result.accept("grays", score("slate", "grays"), 1)
     prompt = build_prompt(Condition.HIST_UNNAMED, result, 2)
-    assert "g r a y s:" in prompt and "grays" not in prompt.lower()
+    assert "grays:" in prompt
+
+
+def test_output_contract_has_no_lexical_examples() -> None:
+    prose = instructional_prose(Condition.HIST_UNNAMED)
+    assert '"guesses"' in prose
+    assert not any(word in prose for word in ("crane", "slate", "trace"))

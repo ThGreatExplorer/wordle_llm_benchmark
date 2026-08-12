@@ -4,6 +4,20 @@
 `frozen/wordle_extra_guesses_2022.txt` contains the 10,657 additional legal guesses.
 Both are normalized to unique lowercase five-letter ASCII words.
 
+## Provenance
+
+**Historical Wordle provenance:** these repository inputs are frozen copies of the
+original pre-NYT 2,315-answer and 10,657-additional-guess lists described in
+`DESIGN.md`. Their upstream retrieval URL was not recorded when the files were
+introduced; the hashes below are therefore the authoritative project provenance.
+
+**SCOWL provenance:** `raw/scowl_60_american.txt.gz` is the frozen level-60
+American-English export used as input. See <https://wordlist.aspell.net/> for the
+SCOWL project; the exact repository artifact is identified by its hash below.
+
+**wordfreq provenance:** the dynamic intersection uses `wordfreq`'s English
+`small` list through the version locked in `uv.lock` (currently 3.1.1).
+
 SHA-256 provenance:
 
 - `wordle_answers_2022.txt`: `5209b35f823f8b80f0404f863bd80df06d6a966c6eb1016d69f38badc6eed5d0`
@@ -18,11 +32,14 @@ the frozen dynamic vocabulary with:
 uv run python scripts/build_dynamic_dictionary.py \
   --scowl data/raw/scowl_60_american.txt.gz \
   --answers data/frozen/wordle_answers_2022.txt \
-  --output data/frozen/dynamic_master_5letter.txt
+  --output data/frozen/dynamic_master_5letter.txt \
+  --force
 ```
 
 Then generate the fully materialized development and evaluation manifests with
-`uv run python -m benchmark generate-manifests --config configs/benchmark.yaml`.
+`uv run python -m benchmark generate-manifests --config configs/benchmark.yaml --force`.
+
+Both commands refuse to overwrite frozen artifacts unless `--force` is explicit.
 
 Frozen manifest SHA-256 hashes:
 
