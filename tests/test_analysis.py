@@ -3,8 +3,6 @@ import json
 from pathlib import Path
 
 import pyarrow.parquet as pq
-import pytest
-
 from benchmark.analysis import analyze_results
 
 
@@ -57,10 +55,12 @@ def test_analysis_exports_metrics_bootstrap_parquet_and_plots(tmp_path: Path) ->
     assert age[0]["violations"] == "1" and age[0]["exposures"] == "3"
     contrasts = list(csv.DictReader((output / "paired_contrasts.csv").open()))
     assert any(row["metric"] == "solve_at_6" and float(row["delta"]) == 1 for row in contrasts)
-    assert (output / "solve_at_6.svg").read_text().startswith("<svg")
-    dashboard = (output / "dashboard.html").read_text()
-    assert "Interactive aggregate results" in dashboard
-    assert '"hist_named"' in dashboard and "constraint_age" in dashboard
+    assert pq.read_table(output / "games.parquet").num_rows == 2
+    assert pq.read_table(output / "proposals.parquet").num_rows == 4
+    assert (output / "analysis_metadata.json").exists()
+    assert (output / "contrasts/paired.parquet").exists()
+    assert (output / "diagnostics/constraint_age.parquet").exists()
+    assert not (output / "dashboard.html").exists()
 
 
 def test_analysis_rejects_duplicate_completed_games(tmp_path: Path) -> None:
@@ -136,7 +136,7 @@ def test_reasoning_effect_and_enforcement_penalty_are_game_paired(tmp_path: Path
     assert len(list(csv.DictReader((tmp_path / "out/gpt5_reasoning_benchmark.csv").open()))) == 4
 
 
-def test_reasoning_comparison_rejects_unpaired_game_ids(tmp_path: Path) -> None:
+def test_reasoning_comparison_marks_partial_pairing(tmp_path: Path) -> None:
     summaries, proposals = [], []
     for model, game_id in (("gpt5", "a"), ("gpt5_medium", "b")):
         common = {"run_id": model, "model_key": model, "condition": "hist_named",
@@ -149,5 +149,35 @@ def test_reasoning_comparison_rejects_unpaired_game_ids(tmp_path: Path) -> None:
                                    "information_gain": [1, 1, 1], "ig_oracle": 1})
     write(tmp_path / "summaries.jsonl", summaries)
     write(tmp_path / "proposals.jsonl", proposals)
-    with pytest.raises(ValueError, match="different game IDs"):
-        analyze_results(tmp_path, tmp_path / "out", resamples=1)
+    analyze_results(tmp_path, tmp_path / "out", resamples=1)
+    row = next(csv.DictReader((tmp_path / "out/reasoning_effects.csv").open()))
+    assert row["pairs"] == "0" and row["pair_complete"] == "False"
+
+
+def test_analysis_discovers_only_selected_provider_and_split(tmp_path: Path) -> None:
+    for name, provider, split, model in (
+        ("openai-eval", "openai", "eval", "gpt5"),
+        ("legacy-openai-eval", None, "eval", "gpt4o"),
+        ("openai-dev", "openai", "dev", "gpt5"),
+        ("qwen-eval", "huggingface_nscale", "eval", "qwen3_8b"),
+    ):
+        directory = tmp_path / name
+        directory.mkdir()
+        metadata = {"run_id": name, "provider": provider, "split": split, "model_key": model,
+                    "condition": "hist_named", "game_mode": "normal", "requested_games": 1}
+        (directory / "metadata.json").write_text(json.dumps(metadata))
+        summary = metadata | {"game_id": name, "solved": True, "round_score": 1,
+                              "played_guess_count": 1, "repair_attempt_count": 0,
+                              "repair_success_count": 0, "forfeit_count": 0}
+        proposal = metadata | {"game_id": name, "decision_round": 1,
+                               "proposal_type": "initial", "played": True,
+                               "evaluations": [evaluation("VALID", True)] * 3,
+                               "information_gain": [1, 1, 1], "ig_oracle": 1}
+        write(directory / "summaries.jsonl", [summary])
+        write(directory / "proposals.jsonl", [proposal])
+
+    analyze_results(tmp_path, tmp_path / "out", provider="openai", split="eval", resamples=1)
+    metrics = list(csv.DictReader((tmp_path / "out/metrics.csv").open()))
+    coverage = list(csv.DictReader((tmp_path / "out/run_coverage.csv").open()))
+    assert {row["model_key"] for row in metrics} == {"gpt4o", "gpt5"}
+    assert {row["run_id"] for row in coverage} == {"legacy-openai-eval", "openai-eval"}

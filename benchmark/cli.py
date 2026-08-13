@@ -214,6 +214,9 @@ def main() -> None:
     analyze.add_argument("--output", type=Path)
     analyze.add_argument("--bootstrap-resamples", type=_positive_int, default=10_000)
     analyze.add_argument("--seed", type=int, default=0)
+    analyze.add_argument("--provider", default="openai")
+    analyze.add_argument("--split", choices=("dev", "eval"), default="eval")
+    analyze.add_argument("--model-prefix", action="append", default=[])
     status = subparsers.add_parser("status")
     status.add_argument("--results", type=Path, required=True)
     clean = subparsers.add_parser("clean-partials")
@@ -350,7 +353,10 @@ def main() -> None:
             _print_completion(output, metadata)
     elif args.command == "analyze":
         output = args.output or args.results / "analysis"
-        analyze_results(args.results, output, resamples=args.bootstrap_resamples, seed=args.seed)
+        analyze_results(
+            args.results, output, resamples=args.bootstrap_resamples, seed=args.seed,
+            provider=args.provider, split=args.split, model_prefixes=tuple(args.model_prefix),
+        )
         print(f"analysis written to {output}")
     elif args.command == "status":
         metadata_path = args.results / "metadata.json"

@@ -18,3 +18,17 @@ def confidence_interval(
     if not values:
         return None, None
     return values[int(0.025 * (len(values) - 1))], values[int(0.975 * (len(values) - 1))]
+
+
+def independent_difference_interval(
+    left: Sequence[float], right: Sequence[float], *, resamples: int = 10_000, seed: int = 0,
+) -> tuple[float | None, float | None]:
+    if not left or not right or resamples < 1:
+        return None, None
+    rng = random.Random(seed)
+    values = sorted(
+        sum(left[rng.randrange(len(left))] for _ in left) / len(left)
+        - sum(right[rng.randrange(len(right))] for _ in right) / len(right)
+        for _ in range(resamples)
+    )
+    return values[int(0.025 * (len(values) - 1))], values[int(0.975 * (len(values) - 1))]

@@ -513,6 +513,59 @@ uv run python -m benchmark run \
 uv run python -m benchmark analyze --results results/<run-id>
 ```
 
+To analyze all currently completed games from the active OpenAI evaluation runs:
+
+```bash
+uv run python -m benchmark analyze \
+  --results results \
+  --output results/analysis-openai-eval
+```
+
+`openai` and `eval` are the command defaults. Override them with `--provider` or
+`--split dev` when intentionally analyzing another slice. Repeat `--model-prefix`
+to narrow model keys. Discovery uses each directory's `metadata.json`, so test,
+legacy, and Qwen directories are not inferred from loose filename matches.
+
+Analysis is safe while runs are active: it reads only games with durable summary
+records and ignores orphan proposals. Aggregate tables and confidence intervals use
+all currently completed games. Paired comparisons use the completed game-ID
+intersection and expose `pair_complete`, pair counts, and per-side game counts; do
+not treat a partial comparison as final.
+
+Outputs include CSV and Parquet tables for aggregate metrics, run completion,
+historical named/unnamed effects, OpenAI model contrasts, dynamic/OOD contrasts,
+reasoning effects, enforcement penalties, constraint age, and consistency by round.
+The canonical Parquet snapshot also contains completed games and flattened proposals
+for the local research portal. CSV files remain convenience exports.
+
+### Launch the research-results portal
+
+After generating the processed analysis above, launch the single local app:
+
+```bash
+uv run streamlit run dashboard/app.py
+```
+
+To use another processed snapshot:
+
+```bash
+uv run streamlit run dashboard/app.py -- \
+  --analysis-dir path/to/analysis
+```
+
+The portal has three views backed by the same deterministic processed data:
+
+- **Research Report** — curated narrative, headline charts, findings, caveats,
+  coverage, and provenance.
+- **Interactive Explorer** — filters, comparison and contrast plots, constraint
+  diagnostics, and compute-efficiency analysis.
+- **Game Explorer** — completed-game search and round-by-round proposal, repair,
+  feedback, candidate-count, information-gain, token, latency, and cost trajectories.
+
+The app reads Parquet through an in-memory DuckDB connection. It never reads raw
+benchmark JSONL, launches benchmarks, modifies results, or calls a model provider.
+Use **Refresh data** after regenerating the processed analysis snapshot.
+
 Do not start the 150-game evaluation split until development runs, prompt checks, manifest hashes, and deterministic tests are frozen and passing.
 
 ### OpenAI medium-reasoning secondary suite
@@ -680,14 +733,12 @@ uv run python -m benchmark analyze \
   --output results/<run-id>/analysis
 ```
 
-The command writes CSV and Parquet metric, constraint-age, and paired-contrast
-tables plus SVG plots. Confidence intervals use 10,000 deterministic bootstrap
+The command writes canonical Parquet tables plus CSV compatibility exports.
+Confidence intervals use 10,000 deterministic bootstrap
 resamples by default; use `--seed` or `--bootstrap-resamples` explicitly when a
 different recorded analysis configuration is required.
 
-Open `analysis/dashboard.html` directly in a browser for interactive model,
-condition, mode, and metric filters, confidence-interval charts, clue-age curves, and
-sortable result tables. The dashboard is self-contained and makes no network calls.
+Launch the Streamlit research-results portal described above for interactive analysis.
 
 ---
 

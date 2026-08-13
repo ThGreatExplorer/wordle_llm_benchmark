@@ -1518,6 +1518,15 @@ Implement in this order so external API cost is incurred only after deterministi
 - export CSV/Parquet summary tables;
 - basic plots for Solve@6, round score, Action Valid@1, Constraint Consistent@1,
   Strict Valid@1, IG efficiency, repair success, and constraint age.
+- canonical completed-game and proposal Parquet tables;
+- one read-only local Streamlit research portal backed by DuckDB and Parquet.
+
+The analysis command may inspect incomplete runs, but only durable completed-game
+summaries are authoritative and orphan proposals are excluded. Partial paired
+comparisons use the intersection of completed game IDs and must report pair counts,
+per-side completion counts, and whether the pair is complete. Final claims require
+complete frozen pairs. Result discovery should filter on recorded provider, split,
+and model metadata rather than accepting unrelated directory names.
 
 Do not implement fine-tuning before these milestones work.
 
@@ -1534,7 +1543,7 @@ Do NOT add these unless the core benchmark is complete:
 - prompt optimization after evaluation begins;
 - arbitrary weighted composite benchmark score;
 - automated fine-tuning;
-- a web frontend;
+- a hosted or benchmark-mutating web frontend;
 - exhaustive testing of dozens of models;
 - provider-side persistent conversations;
 - automatic promotion of second/third guess when top-1 is invalid.

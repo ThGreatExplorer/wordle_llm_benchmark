@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import csv
 import json
+import subprocess
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean, median
 from typing import Any
@@ -10,13 +12,13 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from benchmark.analysis.bootstrap import confidence_interval
-from benchmark.analysis.dashboard import write_dashboard
+from benchmark.analysis.bootstrap import confidence_interval, independent_difference_interval
 from benchmark.experiment.batch import result_key
+from benchmark.experiment.manifests import file_sha256
 from benchmark.types import Condition, GameMode
 
 METRICS = (
-    "solve_at_6", "mean_round_score", "played_guesses_per_game",
+    "solve_at_6", "mean_round_score", "played_guesses_per_game", "played_guesses_among_wins",
     "initial_action_valid_at_1", "initial_action_valid_at_3",
     "constraint_consistent_at_1", "constraint_consistent_at_3",
     "strict_valid_at_1", "strict_valid_at_3", "ig_efficiency", "search_regret",
@@ -29,6 +31,8 @@ REASONING_EFFECT_METRICS = (
     "repair_success_rate", "forfeits_per_game", "ig_efficiency",
     "mean_reasoning_tokens_per_game", "mean_latency_ms_per_game", "mean_cost_usd_per_game",
 )
+OPENAI_MODEL_KEYS = {"gpt4o", "gpt5", "gpt56", "gpt5_medium", "gpt56_medium"}
+ANALYSIS_SCHEMA_VERSION = "analysis-v1"
 
 
 def _model_family(model_key: str) -> str:
@@ -52,6 +56,21 @@ def _proposal_metrics(rows: list[dict[str, Any]]) -> dict[str, float | None]:
     evaluations = [evaluation for row in initial for evaluation in row["evaluations"]]
     top1 = [row["evaluations"][0] if row["evaluations"] else None for row in initial]
     action_evaluations = [item for item in evaluations if item["action_status"] == "VALID"]
+    repairs = [row for row in rows if row["proposal_type"] == "repair"]
+    repair_by_round = {(row["game_id"], row["decision_round"]): row for row in repairs}
+    repair_causes: dict[str, list[bool]] = defaultdict(list)
+    for row in initial:
+        top = row["evaluations"][0] if row["evaluations"] else None
+        if row.get("protocol_error"):
+            cause = "protocol"
+        elif top and top["action_status"] != "VALID":
+            cause = "format" if top["action_status"] == "FORMAT_ERROR" else "lexicon"
+        elif top and not top["constraint_consistent"] and row["game_mode"] == "strict":
+            cause = "constraint"
+        else:
+            continue
+        repair = repair_by_round.get((row["game_id"], row["decision_round"]))
+        repair_causes[cause].append(bool(repair and repair.get("played")))
     efficiencies, search, ranking, total = [], [], [], []
     for row in initial:
         gains = row["information_gain"]
@@ -95,6 +114,11 @@ def _proposal_metrics(rows: list[dict[str, Any]]) -> dict[str, float | None]:
         "repeat_rate": _mean([
             float("REPEAT_ACCEPTED_GUESS" in item["diagnostics"]) for item in action_evaluations
         ]),
+        "protocol_error_rate": _mean([float(bool(row.get("protocol_error"))) for row in initial]),
+        "format_error_rate": _mean([float(item["action_status"] == "FORMAT_ERROR") for item in evaluations]),
+        "lexicon_error_rate": _mean([float(item["action_status"] == "LEXICON_ERROR") for item in evaluations]),
+        **{f"repair_success_{cause}": _mean([float(value) for value in repair_causes[cause]])
+           for cause in ("protocol", "format", "lexicon", "constraint")},
     }
 
 
@@ -114,6 +138,9 @@ def aggregate(summaries: list[dict[str, Any]], proposals: list[dict[str, Any]]) 
         "solve_at_6": _mean([row["solved"] for row in summaries]),
         "mean_round_score": _mean([row["round_score"] for row in summaries]),
         "played_guesses_per_game": _mean([row["played_guess_count"] for row in summaries]),
+        "played_guesses_among_wins": _mean([
+            row["played_guess_count"] for row in summaries if row["solved"]
+        ]),
         **proposal_metrics,
         "repair_success_rate": (
             sum(row["repair_success_count"] for row in summaries)
@@ -138,15 +165,59 @@ def _game_metric(summary: dict[str, Any], proposals: list[dict[str, Any]], metri
     return aggregate([summary], proposals)[metric]
 
 
-def _sample_metric(items: list[tuple[dict[str, Any], list[dict[str, Any]]]], metric: str) -> float | None:
-    result = aggregate(
-        [summary for summary, _ in items],
-        [proposal for _, proposals in items for proposal in proposals],
-    )
-    return result[metric]
+def _metric_components(
+    summary: dict[str, Any], proposals: list[dict[str, Any]], metric: str,
+) -> tuple[float, int]:
+    initial = [row for row in proposals if row["proposal_type"] == "initial"]
+    evaluations = [item for row in initial for item in row["evaluations"]]
+    top1 = [row["evaluations"][0] if row["evaluations"] else None for row in initial]
+    valid = [item for item in evaluations if item["action_status"] == "VALID"]
+    simple = {
+        "solve_at_6": (float(summary["solved"]), 1),
+        "mean_round_score": (summary["round_score"], 1),
+        "played_guesses_per_game": (summary["played_guess_count"], 1),
+        "played_guesses_among_wins": (
+            summary["played_guess_count"] if summary["solved"] else 0, int(summary["solved"])),
+        "repair_success_rate": (summary["repair_success_count"], summary["repair_attempt_count"]),
+        "forfeits_per_game": (summary["forfeit_count"], 1),
+        "forfeit_rate": (summary["forfeit_count"], max((row["decision_round"] for row in proposals), default=0)),
+        "initial_action_valid_at_1": (
+            sum(bool(item and item["action_status"] == "VALID") for item in top1), len(initial)),
+        "initial_action_valid_at_3": (len(valid), 3 * len(initial)),
+        "constraint_consistent_at_1": (
+            sum(bool(item["constraint_consistent"]) for item in top1
+                if item and item["action_status"] == "VALID"),
+            sum(bool(item and item["action_status"] == "VALID") for item in top1)),
+        "constraint_consistent_at_3": (sum(bool(item["constraint_consistent"]) for item in valid), len(valid)),
+        "strict_valid_at_1": (
+            sum(bool(item and item["action_status"] == "VALID" and item["constraint_consistent"])
+                for item in top1), len(initial)),
+        "strict_valid_at_3": (sum(bool(item["constraint_consistent"]) for item in valid), 3 * len(initial)),
+        "repeat_rate": (
+            sum("REPEAT_ACCEPTED_GUESS" in item["diagnostics"] for item in valid), len(valid)),
+    }
+    if metric in simple:
+        return simple[metric]
+    values = []
+    for row in initial:
+        gains = row["information_gain"]
+        valid_gains = [gain for gain in gains if gain is not None]
+        if metric == "search_regret" and valid_gains:
+            values.append(row["ig_oracle"] - max(valid_gains))
+        elif gains and gains[0] is not None:
+            if metric == "ig_efficiency" and row["ig_oracle"] > 0:
+                values.append(gains[0] / row["ig_oracle"])
+            elif metric == "ranking_regret" and valid_gains:
+                values.append(max(valid_gains) - gains[0])
+            elif metric == "total_regret":
+                values.append(row["ig_oracle"] - gains[0])
+    return sum(values), len(values)
 
 
 def _write_table(rows: list[dict[str, Any]], stem: Path, columns: list[str]) -> None:
+    stem.parent.mkdir(parents=True, exist_ok=True)
+    if rows and "split" in rows[0] and "split" not in columns:
+        columns = [*columns, "split"]
     with stem.with_suffix(".csv").open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
@@ -155,28 +226,144 @@ def _write_table(rows: list[dict[str, Any]], stem: Path, columns: list[str]) -> 
     pq.write_table(table, stem.with_suffix(".parquet"))
 
 
-def _svg(rows: list[dict[str, Any]], metric: str, path: Path) -> None:
-    values = [(f'{row["model_key"]} {row["condition"]} {row["game_mode"]}', row[metric]) for row in rows if row[metric] is not None]
-    width, height = 900, max(180, 60 + 28 * len(values))
-    maximum = max((abs(value) for _, value in values), default=1) or 1
-    bars = []
-    for index, (label, value) in enumerate(values):
-        y, bar = 45 + index * 28, 600 * abs(value) / maximum
-        bars.append(f'<text x="10" y="{y + 14}">{label}</text><rect x="260" y="{y}" width="{bar:.1f}" height="18" fill="#4c78a8"/><text x="{270 + bar:.1f}" y="{y + 14}">{value:.4f}</text>')
-    path.write_text(
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">'
-        f'<style>text{{font:12px sans-serif}}</style><text x="10" y="22" font-size="16">{metric}</text>'
-        + "".join(bars) + "</svg>\n"
+def _secrets(run_metadata: list[dict[str, Any]]) -> dict[tuple[str, str], str]:
+    secrets = {}
+    for metadata in run_metadata:
+        name = metadata.get("selected_manifest")
+        if not name:
+            continue
+        path = Path("data/manifests") / name
+        if not path.exists():
+            raise ValueError(f"selected manifest not found: {path}")
+        expected = metadata.get("selected_manifest_hash") or metadata.get("manifest_hashes", {}).get(name)
+        if expected and file_sha256(path) != expected:
+            raise ValueError(f"selected manifest hash differs: {path}")
+        for row in _read([path]):
+            secrets[metadata["run_id"], row["game_id"]] = row["secret"]
+    return secrets
+
+
+def _processed_rows(
+    summaries: list[dict[str, Any]], proposals: list[dict[str, Any]],
+    run_metadata: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    metadata = {row.get("run_id"): row for row in run_metadata}
+    secrets = _secrets(run_metadata)
+    by_game: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in proposals:
+        by_game[row["run_id"], row["game_id"]].append(row)
+    games = []
+    for summary in summaries:
+        meta = metadata.get(summary["run_id"], {})
+        game_rows = by_game[summary["run_id"], summary["game_id"]]
+        games.append({
+            **summary,
+            "exact_model_id": summary.get("requested_model_id") or meta.get("requested_model_id"),
+            "split": meta.get("split"),
+            "reasoning_setting": _reasoning_setting(summary["model_key"]),
+            "reasoning_effort": summary.get("reasoning_effort") or meta.get("reasoning_effort")
+                                or meta.get("selected_model_config", {}).get("reasoning_effort"),
+            "secret": secrets.get((summary["run_id"], summary["game_id"])),
+            "played_guesses": [row.get("played_guess") for row in sorted(
+                game_rows, key=lambda row: (row["decision_round"], row["proposal_type"] == "repair")
+            ) if row.get("played")],
+        })
+    flat = []
+    for row in proposals:
+        meta = metadata.get(row["run_id"], {})
+        evaluations, gains = row.get("evaluations", []), row.get("information_gain", [])
+        item = {
+            key: value for key, value in row.items()
+            if key not in {"evaluations", "information_gain", "provider_metadata"}
+        }
+        item |= {
+            "split": meta.get("split"),
+            "reasoning_setting": _reasoning_setting(row["model_key"]),
+            "reasoning_effort": row.get("reasoning_effort") or meta.get("reasoning_effort")
+                                or meta.get("selected_model_config", {}).get("reasoning_effort"),
+            "top1_played": bool(row.get("played")),
+            "information_gain_top1": gains[0] if gains else None,
+            "repeat_diagnostic": bool(evaluations and "REPEAT_ACCEPTED_GUESS" in evaluations[0].get("diagnostics", [])),
+        }
+        for index in range(3):
+            evaluation = evaluations[index] if index < len(evaluations) else {}
+            item |= {
+                f"top{index + 1}": evaluation.get("normalized"),
+                f"top{index + 1}_raw": evaluation.get("raw"),
+                f"top{index + 1}_action_status": evaluation.get("action_status"),
+                f"top{index + 1}_action_valid": evaluation.get("action_status") == "VALID",
+                f"top{index + 1}_constraint_consistent": evaluation.get("constraint_consistent"),
+                f"top{index + 1}_violated_constraint_ages": evaluation.get("violated_constraint_ages", []),
+                f"top{index + 1}_diagnostics": evaluation.get("diagnostics", []),
+                f"information_gain_top{index + 1}": gains[index] if index < len(gains) else None,
+            }
+        flat.append(item)
+    return games, flat
+
+
+def _result_paths(
+    results: Path, *, provider: str | None, split: str | None,
+    model_prefixes: tuple[str, ...],
+) -> tuple[list[Path], list[Path], list[dict[str, Any]]]:
+    if (results / "summaries.jsonl").exists():
+        metadata = json.loads((results / "metadata.json").read_text()) if (results / "metadata.json").exists() else {}
+        return [results / "proposals.jsonl"], [results / "summaries.jsonl"], ([metadata] if metadata else [])
+    directories = []
+    metadata_rows = []
+    for metadata_path in sorted(results.glob("*/metadata.json")):
+        metadata = json.loads(metadata_path.read_text())
+        if provider and metadata.get("provider") != provider:
+            if not (provider == "openai" and metadata.get("provider") is None
+                    and metadata.get("model_key") in OPENAI_MODEL_KEYS):
+                continue
+        if split and metadata.get("split") != split:
+            continue
+        if model_prefixes and not str(metadata.get("model_key", "")).startswith(model_prefixes):
+            continue
+        directories.append(metadata_path.parent)
+        metadata_rows.append(metadata)
+    return (
+        [directory / "proposals.jsonl" for directory in directories if (directory / "proposals.jsonl").exists()],
+        [directory / "summaries.jsonl" for directory in directories if (directory / "summaries.jsonl").exists()],
+        metadata_rows,
     )
 
 
-def analyze_results(results: Path, output: Path, *, resamples: int = 10_000, seed: int = 0) -> None:
-    proposals = _read(sorted(results.rglob("proposals.jsonl")))
-    summaries = _read(sorted(results.rglob("summaries.jsonl")))
+def analyze_results(
+    results: Path, output: Path, *, resamples: int = 10_000, seed: int = 0,
+    provider: str | None = None, split: str | None = None,
+    model_prefixes: tuple[str, ...] = (),
+) -> None:
+    proposal_paths, summary_paths, run_metadata = _result_paths(
+        results, provider=provider, split=split, model_prefixes=model_prefixes,
+    )
+    proposals = _read(proposal_paths)
+    summaries = _read(summary_paths)
     if not summaries:
         raise ValueError(f"no completed game summaries found under {results}")
     completed = {result_key(row) for row in summaries}
     proposals = [row for row in proposals if result_key(row) in completed]
+    completed_by_run: dict[str, int] = defaultdict(int)
+    solved_by_run: dict[str, int] = defaultdict(int)
+    cost_by_run: dict[str, float] = defaultdict(float)
+    for row in summaries:
+        completed_by_run[row["run_id"]] += 1
+        solved_by_run[row["run_id"]] += bool(row.get("solved"))
+        cost_by_run[row["run_id"]] += row.get("estimated_cost_usd_total") or 0
+    coverage_rows = [{
+        "run_id": metadata.get("run_id"), "model_key": metadata.get("model_key"),
+        "condition": metadata.get("condition"), "game_mode": metadata.get("game_mode"),
+        "split": metadata.get("split"), "reasoning_effort": (
+            metadata.get("reasoning_effort")
+            or metadata.get("selected_model_config", {}).get("reasoning_effort")
+        ),
+        "requested": metadata.get("requested_games"),
+        "completed": completed_by_run[metadata.get("run_id")],
+        "pending": ((metadata.get("requested_games") or 0) - completed_by_run[metadata.get("run_id")]),
+        "complete": completed_by_run[metadata.get("run_id")] == metadata.get("requested_games"),
+        "solved": solved_by_run[metadata.get("run_id")],
+        "recorded_cost_usd": cost_by_run[metadata.get("run_id")],
+    } for metadata in run_metadata]
     if any("game_mode" not in row for row in summaries + proposals) or any(
         "action_status" not in evaluation for row in proposals for evaluation in row.get("evaluations", [])
     ):
@@ -197,16 +384,24 @@ def analyze_results(results: Path, output: Path, *, resamples: int = 10_000, see
         group_summaries, group_proposals = summary_groups[key], proposal_groups[key]
         row = {"model_key": key[0], "model_family": _model_family(key[0]),
                "reasoning_setting": _reasoning_setting(key[0]),
-               "condition": key[1], "game_mode": key[2],
+               "condition": key[1], "game_mode": key[2], "split": split,
                **aggregate(group_summaries, group_proposals)}
         by_game = {summary["game_id"]: summary for summary in group_summaries}
         game_proposals = defaultdict(list)
         for proposal in group_proposals:
             game_proposals[proposal["game_id"]].append(proposal)
-        items = [(summary, game_proposals[game_id]) for game_id, summary in sorted(by_game.items())]
         for offset, metric in enumerate(METRICS):
+            components = [
+                _metric_components(summary, game_proposals[game_id], metric)
+                for game_id, summary in sorted(by_game.items())
+            ]
             low, high = confidence_interval(
-                items, lambda sample, m=metric: _sample_metric(sample, m),
+                components,
+                lambda sample: (
+                    sum(numerator for numerator, _ in sample)
+                    / sum(denominator for _, denominator in sample)
+                    if sum(denominator for _, denominator in sample) else None
+                ),
                 resamples=resamples, seed=seed + offset,
             )
             row[f"{metric}_ci_low"], row[f"{metric}_ci_high"] = low, high
@@ -222,10 +417,8 @@ def analyze_results(results: Path, output: Path, *, resamples: int = 10_000, see
             if (value := _game_metric(summary, grouped[summary["game_id"]], metric)) is not None
         }
 
-    def require_paired(left: tuple[str, str, str], right: tuple[str, str, str]) -> None:
+    def validate_pair(left: tuple[str, str, str], right: tuple[str, str, str]) -> None:
         left_rows, right_rows = summary_groups[left], summary_groups[right]
-        if {row["game_id"] for row in left_rows} != {row["game_id"] for row in right_rows}:
-            raise ValueError(f"paired comparison has different game IDs: {left} vs {right}")
         for field in ("benchmark_version", "prompt_version", "requested_model_id", "provider",
                       "manifest_hash", "temperature"):
             left_values = {row.get(field) for row in left_rows}
@@ -242,7 +435,7 @@ def analyze_results(results: Path, output: Path, *, resamples: int = 10_000, see
                 )
                 if baseline not in summary_groups or medium not in summary_groups:
                     continue
-                require_paired(baseline, medium)
+                validate_pair(baseline, medium)
                 for offset, metric in enumerate(REASONING_EFFECT_METRICS):
                     left, right = game_values(baseline, metric), game_values(medium, metric)
                     ids = sorted(left.keys() & right.keys())
@@ -251,9 +444,13 @@ def analyze_results(results: Path, output: Path, *, resamples: int = 10_000, see
                         pairs, lambda sample: _mean([medium_value - base for base, medium_value in sample]),
                         resamples=resamples, seed=seed + offset,
                     )
+                    left_ids = {row["game_id"] for row in summary_groups[baseline]}
+                    right_ids = {row["game_id"] for row in summary_groups[medium]}
                     reasoning_effects.append({
                         "model_family": family, "condition": condition.value,
                         "game_mode": mode.value, "metric": metric, "pairs": len(pairs),
+                        "baseline_games": len(left_ids), "medium_games": len(right_ids),
+                        "pair_complete": left_ids == right_ids,
                         "delta_medium_minus_baseline": _mean([b - a for a, b in pairs]),
                         "ci_low": low, "ci_high": high,
                     })
@@ -266,7 +463,7 @@ def analyze_results(results: Path, output: Path, *, resamples: int = 10_000, see
             strict = model_key, condition.value, "strict"
             if normal not in summary_groups or strict not in summary_groups:
                 continue
-            require_paired(normal, strict)
+            validate_pair(normal, strict)
             normal_solve, strict_solve = game_values(normal, "solve_at_6"), game_values(strict, "solve_at_6")
             normal_score, strict_score = game_values(normal, "mean_round_score"), game_values(strict, "mean_round_score")
             ids = sorted(normal_solve.keys() & strict_solve.keys() & normal_score.keys() & strict_score.keys())
@@ -274,13 +471,29 @@ def analyze_results(results: Path, output: Path, *, resamples: int = 10_000, see
             score_pairs = [(normal_score[i], strict_score[i]) for i in ids]
             solve_penalty = _mean([normal_value - strict_value for normal_value, strict_value in solve_pairs])
             score_penalty = _mean([strict_value - normal_value for normal_value, strict_value in score_pairs])
+            solve_low, solve_high = confidence_interval(
+                solve_pairs,
+                lambda sample: _mean([normal_value - strict_value for normal_value, strict_value in sample]),
+                resamples=resamples, seed=seed,
+            )
+            score_low, score_high = confidence_interval(
+                score_pairs,
+                lambda sample: _mean([strict_value - normal_value for normal_value, strict_value in sample]),
+                resamples=resamples, seed=seed + 1,
+            )
             enforcement.append({
                 "model_family": _model_family(model_key),
                 "reasoning_setting": _reasoning_setting(model_key), "condition": condition.value,
-                "pairs": len(ids), "normal_solve": _mean(list(normal_solve.values())),
-                "strict_solve": _mean(list(strict_solve.values())), "solve_penalty": solve_penalty,
-                "normal_score": _mean(list(normal_score.values())),
-                "strict_score": _mean(list(strict_score.values())), "score_penalty": score_penalty,
+                "pairs": len(ids), "normal_games": len(summary_groups[normal]),
+                "strict_games": len(summary_groups[strict]),
+                "pair_complete": ({row["game_id"] for row in summary_groups[normal]}
+                                  == {row["game_id"] for row in summary_groups[strict]}),
+                "normal_solve": _mean([normal_solve[i] for i in ids]),
+                "strict_solve": _mean([strict_solve[i] for i in ids]), "solve_penalty": solve_penalty,
+                "solve_ci_low": solve_low, "solve_ci_high": solve_high,
+                "normal_score": _mean([normal_score[i] for i in ids]),
+                "strict_score": _mean([strict_score[i] for i in ids]), "score_penalty": score_penalty,
+                "score_ci_low": score_low, "score_ci_high": score_high,
             })
             penalties[_model_family(model_key), condition.value, _reasoning_setting(model_key)] = {
                 game_id: normal_solve[game_id] - strict_solve[game_id] for game_id in ids
@@ -354,7 +567,7 @@ def analyze_results(results: Path, output: Path, *, resamples: int = 10_000, see
         named = {row["game_id"]: row for row in summary_groups.get(named_key, [])}
         unnamed = {row["game_id"]: row for row in summary_groups.get(unnamed_key, [])}
         if named and unnamed:
-            require_paired(named_key, unnamed_key)
+            validate_pair(named_key, unnamed_key)
         ids = sorted(named.keys() & unnamed.keys())
         if not ids:
             continue
@@ -369,25 +582,110 @@ def analyze_results(results: Path, output: Path, *, resamples: int = 10_000, see
             low, high = confidence_interval(pairs, lambda sample: _mean([a - b for a, b in sample]), resamples=resamples, seed=seed + offset)
             contrasts.append({"model_key": model, "game_mode": mode,
                               "contrast": "hist_named-hist_unnamed", "metric": metric,
-                              "pairs": len(pairs), "delta": delta, "ci_low": low, "ci_high": high})
+                              "pairs": len(pairs), "left_games": len(named), "right_games": len(unnamed),
+                              "pair_complete": set(named) == set(unnamed),
+                              "delta": delta, "ci_low": low, "ci_high": high})
+
+    model_contrasts = []
+    for left_model, right_model in (("gpt5", "gpt4o"), ("gpt56", "gpt5"), ("gpt56", "gpt4o")):
+        for condition in Condition:
+            for mode in GameMode:
+                left_key, right_key = ((left_model, condition.value, mode.value),
+                                       (right_model, condition.value, mode.value))
+                if left_key not in summary_groups or right_key not in summary_groups:
+                    continue
+                left_ids = {row["game_id"] for row in summary_groups[left_key]}
+                right_ids = {row["game_id"] for row in summary_groups[right_key]}
+                for offset, metric in enumerate(METRICS):
+                    left, right = game_values(left_key, metric), game_values(right_key, metric)
+                    ids = sorted(left.keys() & right.keys())
+                    pairs = [(left[game_id], right[game_id]) for game_id in ids]
+                    low, high = confidence_interval(
+                        pairs, lambda sample: _mean([a - b for a, b in sample]),
+                        resamples=resamples, seed=seed + offset,
+                    )
+                    model_contrasts.append({
+                        "left_model": left_model, "right_model": right_model,
+                        "condition": condition.value, "game_mode": mode.value,
+                        "metric": metric, "pairs": len(pairs), "left_games": len(left_ids),
+                        "right_games": len(right_ids), "pair_complete": left_ids == right_ids,
+                        "delta": _mean([a - b for a, b in pairs]), "ci_low": low, "ci_high": high,
+                    })
+
+    dynamic_contrasts = []
+    for model, mode in sorted({(key[0], key[2]) for key in summary_groups}):
+        historical_key, dynamic_key = ((model, "hist_unnamed", mode),
+                                       (model, "dynamic_256", mode))
+        if historical_key not in summary_groups or dynamic_key not in summary_groups:
+            continue
+        for offset, metric in enumerate(METRICS):
+            historical = list(game_values(historical_key, metric).values())
+            dynamic = list(game_values(dynamic_key, metric).values())
+            low, high = independent_difference_interval(
+                historical, dynamic, resamples=resamples, seed=seed + offset,
+            )
+            dynamic_contrasts.append({
+                "model_key": model, "game_mode": mode, "metric": metric,
+                "historical_games": len(historical), "dynamic_games": len(dynamic),
+                "delta_hist_unnamed_minus_dynamic": (
+                    mean(historical) - mean(dynamic) if historical and dynamic else None
+                ), "ci_low": low, "ci_high": high,
+            })
 
     output.mkdir(parents=True, exist_ok=True)
+    for rows in (age_rows, round_rows, contrasts, model_contrasts, dynamic_contrasts,
+                 reasoning_effects, enforcement, penalty_reductions):
+        for row in rows:
+            row["split"] = split
+    games, processed_proposals = _processed_rows(summaries, proposals, run_metadata)
     _write_table(metric_rows, output / "metrics", list(metric_rows[0]))
+    _write_table(coverage_rows, output / "run_coverage", [
+        "run_id", "model_key", "condition", "game_mode", "split", "reasoning_effort",
+        "requested", "completed", "pending", "complete", "solved", "recorded_cost_usd",
+    ])
     _write_table(age_rows, output / "constraint_age", ["model_key", "condition", "game_mode", "clue_age", "violations", "exposures", "violation_rate"])
     _write_table(round_rows, output / "consistency_by_round", ["model_key", "condition", "game_mode", "decision_round", "consistent", "action_valid", "consistency_rate"])
-    _write_table(contrasts, output / "paired_contrasts", ["model_key", "game_mode", "contrast", "metric", "pairs", "delta", "ci_low", "ci_high"])
+    _write_table(games, output / "games", list(games[0]) if games else [])
+    _write_table(processed_proposals, output / "proposals", list(processed_proposals[0]) if processed_proposals else [])
+    _write_table(contrasts, output / "paired_contrasts", [
+        "model_key", "game_mode", "contrast", "metric", "pairs", "left_games",
+        "right_games", "pair_complete", "delta", "ci_low", "ci_high",
+    ])
+    _write_table(model_contrasts, output / "model_contrasts", [
+        "left_model", "right_model", "condition", "game_mode", "metric", "pairs",
+        "left_games", "right_games", "pair_complete", "delta", "ci_low", "ci_high",
+    ])
+    _write_table(dynamic_contrasts, output / "dynamic_contrasts", [
+        "model_key", "game_mode", "metric", "historical_games", "dynamic_games",
+        "delta_hist_unnamed_minus_dynamic", "ci_low", "ci_high",
+    ])
     _write_table(reasoning_effects, output / "reasoning_effects", [
         "model_family", "condition", "game_mode", "metric", "pairs",
+        "baseline_games", "medium_games", "pair_complete",
         "delta_medium_minus_baseline", "ci_low", "ci_high",
     ])
     _write_table(enforcement, output / "enforcement_penalty", [
-        "model_family", "reasoning_setting", "condition", "pairs", "normal_solve",
-        "strict_solve", "solve_penalty", "normal_score", "strict_score", "score_penalty",
+        "model_family", "reasoning_setting", "condition", "pairs", "normal_games",
+        "strict_games", "pair_complete", "normal_solve",
+        "strict_solve", "solve_penalty", "solve_ci_low", "solve_ci_high",
+        "normal_score", "strict_score", "score_penalty", "score_ci_low", "score_ci_high",
     ])
     _write_table(penalty_reductions, output / "penalty_reduction", [
         "model_family", "condition", "pairs", "baseline_penalty", "medium_penalty",
         "penalty_reduction", "ci_low", "ci_high",
     ])
+    for source, target in (
+        ("paired_contrasts", "contrasts/paired"), ("model_contrasts", "contrasts/model"),
+        ("dynamic_contrasts", "contrasts/dynamic"), ("reasoning_effects", "contrasts/reasoning"),
+        ("enforcement_penalty", "contrasts/enforcement_penalty"),
+        ("penalty_reduction", "contrasts/penalty_reduction"),
+        ("constraint_age", "diagnostics/constraint_age"),
+        ("consistency_by_round", "diagnostics/consistency_by_round"),
+    ):
+        table = pq.read_table(output / f"{source}.parquet")
+        target_path = output / f"{target}.parquet"
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        pq.write_table(table, target_path)
     reasoning_columns = [
         "condition", "game_mode", "reasoning_setting", "solve_at_6",
         "constraint_consistent_at_1", "strict_valid_at_1", "forfeits_per_game",
@@ -399,9 +697,20 @@ def analyze_results(results: Path, output: Path, *, resamples: int = 10_000, see
              if row["model_family"] == family],
             output / f"{family}_reasoning_benchmark", reasoning_columns,
         )
-    for metric in ("solve_at_6", "mean_round_score", "initial_action_valid_at_1",
-                   "constraint_consistent_at_1", "strict_valid_at_1", "ig_efficiency",
-                   "repair_success_rate"):
-        _svg(metric_rows, metric, output / f"{metric}.svg")
-    _svg(age_rows, "violation_rate", output / "constraint_age.svg")
-    write_dashboard(metric_rows, age_rows, contrasts, output / "dashboard.html")
+    analysis_metadata = {
+        "analysis_schema_version": ANALYSIS_SCHEMA_VERSION,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "git_commit": subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False,
+        ).stdout.strip() or None,
+        "bootstrap_resamples": resamples, "bootstrap_seed": seed,
+        "provider": provider, "split": split, "model_prefixes": list(model_prefixes),
+        "source_run_ids": sorted(row.get("run_id") for row in run_metadata if row.get("run_id")),
+        "benchmark_versions": sorted({row.get("benchmark_version") for row in summaries if row.get("benchmark_version")}),
+        "prompt_versions": sorted({row.get("prompt_version") for row in summaries if row.get("prompt_version")}),
+        "manifest_hashes": sorted({row.get("manifest_hash") for row in summaries if row.get("manifest_hash")}),
+        "model_config_hashes": sorted({row.get("model_config_hash") for row in run_metadata if row.get("model_config_hash")}),
+        "benchmark_config_hashes": sorted({row.get("benchmark_config_hash") for row in run_metadata if row.get("benchmark_config_hash")}),
+        "coverage_complete": all(row["complete"] for row in coverage_rows),
+    }
+    (output / "analysis_metadata.json").write_text(json.dumps(analysis_metadata, indent=2, sort_keys=True) + "\n")
