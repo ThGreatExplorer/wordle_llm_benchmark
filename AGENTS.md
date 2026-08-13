@@ -72,14 +72,15 @@ Do not duplicate large portions of `DESIGN.md` into code comments. Link concepts
 
 ## Experimental invariants: do not change silently
 
-The MVP consists of exactly six model tracks:
+The Part 1 MVP consists of exactly three model tracks:
 
 - GPT-4o
 - GPT-5
 - GPT-5.6
-- Qwen3 8B
-- Qwen3 14B
-- Qwen3 32B
+
+Qwen3 8B, 14B, and 32B are a Part 2 extension, not MVP tracks. Existing Qwen
+adapter/configuration code may remain, but do not include Qwen in MVP execution,
+coverage, completion criteria, or primary analysis.
 
 and exactly three evaluation conditions:
 
@@ -161,7 +162,7 @@ Implement and test:
 Only after Milestones 1–3 pass:
 
 - OpenAI Responses API adapter;
-- Hugging Face Inference Providers adapter with Nscale pinned for Qwen;
+- Part 2 only: Hugging Face Inference Providers adapter with Nscale pinned for Qwen;
 - token/latency/cost capture;
 - transient retry handling;
 - bounded concurrency;
@@ -393,7 +394,10 @@ Credentials come from environment variables or secret management. Never commit k
 
 Exact provider model IDs and prices belong in configuration, not game logic.
 
-Qwen tracks must use the dedicated stateless Hugging Face Inference Providers adapter. Final evaluation uses Nscale for Qwen3 8B, 14B, and 32B through exact `:nscale` model suffixes, with reasoning effort `none` and strict structured output. Record the exact requested model and returned model metadata on every proposal; never omit or replace the provider suffix.
+Qwen tracks are outside the Part 1 MVP. If Part 2 Qwen work is explicitly started,
+use the dedicated stateless Hugging Face Inference Providers adapter with Nscale for
+Qwen3 8B, 14B, and 32B through exact `:nscale` model suffixes, reasoning effort
+`none`, and strict structured output. Record requested and returned model metadata.
 
 ---
 

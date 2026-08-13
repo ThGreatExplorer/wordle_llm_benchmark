@@ -3,13 +3,13 @@
 **Status:** Frozen MVP v4 design for implementation
 **Audience:** Codex / software engineer implementing the benchmark
 **Primary language:** Python 3.11+
-**Purpose:** Build a reproducible benchmark for multi-turn lexical constraint reasoning across six language models.
+**Purpose:** Build a reproducible benchmark for multi-turn lexical constraint reasoning across three OpenAI language models.
 
 ---
 
 ## 1. Project summary
 
-Build a deterministic local Wordle-style game engine plus a stateless LLM evaluation harness. The system evaluates six models across three game conditions using frozen test manifests. Each model must receive the same instances within a condition. Every LLM turn is a fresh API/model call reconstructed from the public game state; no provider conversation state may persist between turns or games.
+Build a deterministic local Wordle-style game engine plus a stateless LLM evaluation harness. The Part 1 MVP evaluates three OpenAI models across three game conditions using frozen test manifests. Each model must receive the same instances within a condition. Every LLM turn is a fresh API/model call reconstructed from the public game state; no provider conversation state may persist between turns or games.
 
 The benchmark studies whether models can:
 
@@ -34,7 +34,7 @@ This project is an evaluation harness first. Fine-tuning is explicitly optional 
 ## 2. Research questions
 
 ### RQ1
-How does multi-turn word-constraint reasoning vary across frontier, legacy, and open-weight language models?
+How does multi-turn word-constraint reasoning vary across OpenAI model generations?
 
 ### RQ2
 How much does recognizing the task as Wordle improve performance?
@@ -46,7 +46,7 @@ Does changing Wordle from a fixed historical answer distribution to dynamically 
 
 ## 3. Models
 
-The frozen six-model comparison is:
+The frozen Part 1 MVP comparison is:
 
 ### OpenAI generation track
 
@@ -54,21 +54,27 @@ The frozen six-model comparison is:
 2. GPT-5
 3. GPT-5.6
 
-### Qwen3 parameter-scaling track
-
-4. Qwen3 8B
-5. Qwen3 14B
-6. Qwen3 32B
-
 Do not hard-code provider-specific model IDs into game logic. Put exact model identifiers, reasoning settings, endpoints, pricing, and credentials in configuration.
 
 For the main benchmark, use direct/non-thinking or the lowest practical reasoning mode so that inference-time reasoning budgets are not intentionally varied across families. Record the exact inference configuration for every run.
 
-All Qwen tracks MUST run through the dedicated stateless Hugging Face Inference Providers adapter using its OpenAI-compatible Chat Completions endpoint. Use the frozen model IDs `Qwen/Qwen3-8B:nscale`, `Qwen/Qwen3-14B:nscale`, and `Qwen/Qwen3-32B:nscale`, explicitly pinning Nscale for all sizes. Require strict structured output, disable reasoning with effort `none`, and record the exact requested and returned model metadata for every response.
+### Part 2 — Qwen parameter-scaling extension
+
+Qwen3 8B, 14B, and 32B are no longer part of the MVP or its completion criteria.
+They are reserved for Part 2, after the OpenAI benchmark and analysis are complete.
+The existing Hugging Face/Nscale adapter and configurations may remain in the
+repository as inactive infrastructure, but Qwen runs must not be included in MVP
+coverage, primary tables, or claims.
+
+When Part 2 begins, all Qwen tracks MUST run through the dedicated stateless Hugging
+Face Inference Providers adapter using the frozen model IDs
+`Qwen/Qwen3-8B:nscale`, `Qwen/Qwen3-14B:nscale`, and `Qwen/Qwen3-32B:nscale`.
+Explicitly pin Nscale, require strict structured output, disable reasoning with effort
+`none`, and record exact requested and returned model metadata.
 
 ### Full OpenAI medium-reasoning ablation
 
-The primary six-model configurations remain unchanged. A secondary experiment uses
+The primary three-model configurations remain unchanged. A secondary experiment uses
 separate `gpt5_medium` and `gpt56_medium` configurations with the same pinned GPT-5
 and GPT-5.6 model IDs, prompts, frozen instances, provider, and gameplay protocol as
 their baselines. The treatment is solely `reasoning.effort: medium`; it does not add
@@ -77,7 +83,7 @@ freeze a 120-second full-call timeout and 2,048 maximum output tokens.
 
 The secondary matrix is GPT-5 and GPT-5.6 × all three conditions × normal and strict
 mode × all 150 evaluation games: 12 resumable runs and 1,800 reasoning-enabled games.
-GPT-4o and all Qwen tracks are excluded. NORMAL primarily measures whether moderate
+GPT-4o is excluded. Qwen is outside the Part 1 MVP entirely. NORMAL primarily measures whether moderate
 inference-time computation improves general solving when constraint mistakes remain
 playable. STRICT measures exact cumulative constraint execution under enforcement.
 The interaction asks whether medium reasoning reduces the NORMAL-to-STRICT solve and
@@ -106,11 +112,11 @@ conditions and 150 frozen evaluation instances per condition per model.
 
 The primary NORMAL experiment contains:
 
-`6 models * 3 conditions * 150 instances = 2700 games`
+`3 models * 3 conditions * 150 instances = 1350 games`
 
 The harness also supports STRICT mode over the same instances. STRICT is an
 additional constraint-enforced evaluation and is not automatically part of the
-2,700-game primary matrix. A later study may intentionally run both modes over
+1,350-game primary matrix. A later study may intentionally run both modes over
 the full matrix.
 
 A game has at most **6 decision rounds**.
@@ -642,7 +648,9 @@ providers/huggingface_nscale.py
 providers/mock.py
 ```
 
-`huggingface_nscale.py` is the dedicated Qwen adapter. Its exact provider-suffixed model and base URL remain explicit configuration, while every request is stateless. `openai_compatible.py` is only the shared transport implementation; do not use it directly for primary Qwen runs.
+`huggingface_nscale.py` is retained for the Part 2 Qwen extension. Its exact
+provider-suffixed model and base URL remain explicit configuration, while every
+request is stateless. It is not an MVP execution path.
 
 ### Provider responsibilities
 
@@ -674,7 +682,7 @@ Create a config file such as:
 configs/models.yaml
 ```
 
-Conceptual structure:
+Conceptual MVP structure:
 
 ```yaml
 models:
@@ -698,6 +706,12 @@ models:
     temperature: 0
     reasoning_effort: <none/direct mode if supported>
 
+```
+
+Part 2 extends the configuration with entries such as:
+
+```yaml
+models:
   qwen3_8b:
     provider: huggingface_nscale
     base_url: https://router.huggingface.co/v1
@@ -709,7 +723,7 @@ models:
     output_price_per_million: null
 ```
 
-Repeat for Qwen3 14B and 32B using their exact Hugging Face model IDs with the `:nscale` suffix.
+Repeat for Qwen3 14B and 32B in Part 2 using their exact Hugging Face model IDs with the `:nscale` suffix.
 
 Do not assume deterministic inference merely because temperature is zero. Record configuration and treat the 150 frozen instances as the experimental sample. If a provider exposes a request seed, it may be recorded/used, but the benchmark must not rely on it for correctness.
 
@@ -1025,7 +1039,7 @@ For each model and condition, report at minimum:
 - forfeit rate;
 - constraint-violation curve by clue age.
 
-For Qwen3 specifically, plot metrics against parameter scale (8B, 14B, 32B).
+In Part 2, plot Qwen3 metrics against parameter scale (8B, 14B, 32B).
 
 For OpenAI, describe GPT-4o -> GPT-5 -> GPT-5.6 as a model-generation comparison, not a parameter-scaling curve.
 
@@ -1245,7 +1259,7 @@ python -m benchmark run \
   --mode normal \
   --split dev
 
-# Run one model on evaluation data
+# Part 2 only: run one Qwen model on evaluation data
 python -m benchmark run \
   --model qwen3_8b \
   --condition dynamic_256 \
@@ -1506,7 +1520,7 @@ Implement in this order so external API cost is incurred only after deterministi
 ### Milestone 4: provider integration
 
 - official OpenAI Responses adapter;
-- Hugging Face Inference Providers adapter with Nscale pinned for Qwen;
+- Part 2 only: Hugging Face Inference Providers adapter with Nscale pinned for Qwen;
 - token/latency/cost capture;
 - transient infrastructure retries;
 - concurrency and resume.
@@ -1558,9 +1572,12 @@ Do NOT add these unless the core benchmark is complete:
 
 ---
 
-## 29. Frozen Qwen deployment decision
+## 29. Part 2 Qwen deployment decision
 
-The primary benchmark uses Hugging Face Inference Providers with Nscale explicitly pinned for Qwen3 8B, 14B, and 32B. Do not substitute another deployment, provider policy, or Qwen generation without creating a new benchmark version and rerunning all affected comparisons. Fine-tuning remains outside the MVP.
+Qwen is not part of the MVP. Part 2 will use Hugging Face Inference Providers with
+Nscale explicitly pinned for Qwen3 8B, 14B, and 32B. Do not include partial Qwen
+results in MVP analysis or substitute another deployment, provider policy, or Qwen
+generation without defining and versioning the Part 2 experiment.
 
 ---
 
@@ -1572,13 +1589,12 @@ The MVP is complete when all of the following are true:
 2. dev and evaluation manifests can be generated and frozen reproducibly;
 3. all three prompts satisfy contamination/naming checks;
 4. a mock provider can run the entire game/repair protocol end to end;
-5. OpenAI and OpenAI-compatible provider adapters can execute stateless calls;
+5. the OpenAI provider adapter can execute stateless calls;
 6. one development game can be run successfully for an OpenAI model;
-7. one development game can be run successfully against each configured Hugging Face/Nscale Qwen track;
-8. results are resumable and logged without duplicate completed games;
-9. the analysis command computes primary metrics plus the agreed behavioral metrics;
-10. no evaluation run depends on persistent LLM session state;
-11. all run artifacts include prompt/config/manifest hashes.
+7. results are resumable and logged without duplicate completed games;
+8. the analysis command computes primary metrics plus the agreed behavioral metrics;
+9. no evaluation run depends on persistent LLM session state;
+10. all run artifacts include prompt/config/manifest hashes.
 
 ---
 

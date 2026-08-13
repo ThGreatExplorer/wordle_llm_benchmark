@@ -40,19 +40,19 @@ The frozen MVP contains three conditions.
 
 `dynamic_256` contains 150 independently generated and frozen candidate pools. Each model receives the exact same pools, secrets, and candidate ordering.
 
-There are six primary model tracks:
+The Part 1 MVP has three primary model tracks:
 
 - GPT-4o
 - GPT-5
 - GPT-5.6
-- Qwen3 8B
-- Qwen3 14B
-- Qwen3 32B
+
+Qwen3 8B, 14B, and 32B are deferred to Part 2. They are not required for MVP
+completion and are excluded from the primary MVP analysis.
 
 NORMAL mode is the primary general-solving evaluation:
 
 ```text
-6 models × 3 conditions × 150 games = 2,700 games
+3 models × 3 conditions × 150 games = 1,350 games
 ```
 
 Constraint enforcement is a separate explicit dimension:
@@ -300,16 +300,17 @@ uv run python -m benchmark run \
   --max-cost-usd 1
 ```
 
-For Qwen, set `HF_TOKEN`. The frozen Qwen3 8B, 14B, and 32B tracks use Hugging
+The MVP requires only the OpenAI credentials described above. For the deferred
+Part 2 Qwen extension, set `HF_TOKEN`. Qwen3 8B, 14B, and 32B use Hugging
 Face Inference Providers through its OpenAI-compatible endpoint. Each request is
 stateless, and the runner never passes a conversation or previous-response ID.
 
-Final evaluation explicitly pins Nscale for all three Qwen sizes through the model
+Part 2 evaluation explicitly pins Nscale for all three Qwen sizes through the model
 IDs `Qwen/Qwen3-8B:nscale`, `Qwen/Qwen3-14B:nscale`, and
 `Qwen/Qwen3-32B:nscale`. Reasoning effort is `none`, strict structured output is
 required, and each proposal records the exact requested and returned model IDs.
 
-Qwen pricing remains unset until it is checked immediately before final evaluation,
+Part 2 Qwen pricing remains unset until it is checked immediately before its evaluation,
 so estimated costs are `null` and `--max-cost-usd` is unavailable for these runs.
 Use `--limit 1` for a one-game development smoke test.
 
@@ -348,7 +349,7 @@ tightest budget control.
 - Python 3.11 or newer
 - [`uv`](https://docs.astral.sh/uv/)
 - API credentials only for providers you intend to run
-- Hugging Face token authorized for Inference Providers calls for the Qwen tracks
+- Part 2 only: Hugging Face token authorized for Qwen Inference Providers calls
 
 The project uses `uv` for dependency management, virtual environments, locking, and command execution.
 
@@ -449,10 +450,12 @@ uv run python -m benchmark run \
 
 Only after deterministic and mock tests pass, connect real providers.
 
-The benchmark needs two main adapter styles:
+The MVP uses:
 
-- OpenAI Responses API;
-- Hugging Face Inference Providers' OpenAI-compatible endpoint with Nscale pinned for Qwen inference.
+- OpenAI Responses API.
+
+Part 2 additionally uses Hugging Face Inference Providers' OpenAI-compatible
+endpoint with Nscale pinned for Qwen inference.
 
 Provider-specific model IDs, endpoints, prices, and reasoning settings belong in configuration rather than game code.
 
@@ -482,7 +485,7 @@ uv run python -m benchmark run \
   --split dev
 ```
 
-### Run dynamic development games
+### Part 2: run dynamic Qwen development games
 
 ```bash
 uv run python -m benchmark run \
@@ -704,14 +707,14 @@ For the primary benchmark, use direct/non-thinking or the lowest practical reaso
 
 ---
 
-## Qwen execution
+## Part 2: Qwen execution
 
-Qwen models run through the dedicated stateless Hugging Face/Nscale adapter.
+Qwen is not part of the Part 1 MVP. In Part 2, Qwen models run through the dedicated stateless Hugging Face/Nscale adapter.
 Direct use of the generic compatible adapter and automatic provider-selection
 policies are outside the frozen benchmark protocol. Exact `:nscale` model IDs live
 in `configs/models.yaml`.
 
-The frozen Qwen scaling comparison is Qwen3 8B → 14B → 32B, with all three served by Nscale through Hugging Face Inference Providers.
+The planned Part 2 scaling comparison is Qwen3 8B → 14B → 32B, with all three served by Nscale through Hugging Face Inference Providers.
 
 ---
 
@@ -842,9 +845,9 @@ Prefer Parquet for analysis-friendly outputs and JSONL where an inspectable appe
 
 ### RQ1 — model capability
 
-Compare all six models on task success, constraint fidelity, information efficiency, ranking/search regret, constraint-age errors, and repair behavior.
+For the MVP, compare GPT-4o, GPT-5, and GPT-5.6 on task success, constraint fidelity, information efficiency, ranking/search regret, constraint-age errors, and repair behavior.
 
-For Qwen, parameter count provides a natural scaling axis. For OpenAI models, treat GPT-4o → GPT-5 → GPT-5.6 as a model-generation comparison rather than a parameter-count curve.
+Treat GPT-4o → GPT-5 → GPT-5.6 as a model-generation comparison rather than a parameter-count curve. Qwen parameter scaling is a separate Part 2 analysis.
 
 ### RQ2 — Wordle recognition
 
@@ -872,7 +875,7 @@ This is a generalization/validation comparison rather than a perfectly isolated 
 
 ## Optional post-MVP extension
 
-Fine-tuning is outside the MVP and is not specified for the frozen six-model benchmark.
+Fine-tuning is outside the MVP and is not specified for the frozen three-model benchmark.
 
 Evaluate the fine-tuned model on:
 
@@ -881,7 +884,7 @@ Evaluate the fine-tuned model on:
 
 This extension asks whether fine-tuning learns transferable constraint reasoning rather than merely memorizing Wordle-specific vocabulary or surface labels.
 
-Any future fine-tuning study must not alter the primary six-model RQ1–RQ3 benchmark.
+Any future fine-tuning study must not alter the primary three-model RQ1–RQ3 benchmark.
 
 ---
 
