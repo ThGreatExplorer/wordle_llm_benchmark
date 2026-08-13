@@ -538,33 +538,48 @@ reasoning effects, enforcement penalties, constraint age, and consistency by rou
 The canonical Parquet snapshot also contains completed games and flattened proposals
 for the local research portal. CSV files remain convenience exports.
 
-### Launch the research-results portal
+### Launch the Observable research-results portal
 
-After generating the processed analysis above, launch the single local app:
-
-```bash
-uv run streamlit run dashboard/app.py
-```
-
-To use another processed snapshot:
+Python owns scientific analysis and emits the frontend-neutral Parquet contract.
+Observable Framework owns presentation and queries those Parquet files with
+browser-side DuckDB. Generate the processed analysis first, then launch the portal:
 
 ```bash
-uv run streamlit run dashboard/app.py -- \
-  --analysis-dir path/to/analysis
+cd frontend
+npm install
+npm run dev
 ```
 
-The portal has three views backed by the same deterministic processed data:
+The preflight synchronization validates and copies the default snapshot from
+`results/analysis-openai-eval`. To use another processed snapshot:
+
+```bash
+cd frontend
+WORDLE_ANALYSIS_DIR=/absolute/path/to/analysis npm run dev
+```
+
+The portal is organized around three routes backed by the same deterministic data:
 
 - **Research Report** — curated narrative, headline charts, findings, caveats,
   coverage, and provenance.
-- **Interactive Explorer** — filters, comparison and contrast plots, constraint
-  diagnostics, and compute-efficiency analysis.
-- **Game Explorer** — completed-game search and round-by-round proposal, repair,
-  feedback, candidate-count, information-gain, token, latency, and cost trajectories.
+- **Experiment Lab** — coordinated filters, metric explanations, paired contrasts,
+  constraint diagnostics, and compute/performance analysis.
+- **Game Inspector** — searchable games, a Wordle board, candidate-space trajectory,
+  top-three proposal diagnostics, IG/oracle comparisons, repairs, tokens, latency,
+  and cost.
 
-The app reads Parquet through an in-memory DuckDB connection. It never reads raw
+The site reads Parquet through DuckDB-Wasm. It never reads raw
 benchmark JSONL, launches benchmarks, modifies results, or calls a model provider.
-Use **Refresh data** after regenerating the processed analysis snapshot.
+Build a self-contained static site with:
+
+```bash
+cd frontend
+npm run build
+```
+
+Observable Framework is the supported results frontend. The former Streamlit
+dashboard has been retired; Python remains responsible for all deterministic
+statistics and snapshot validation.
 
 Do not start the 150-game evaluation split until development runs, prompt checks, manifest hashes, and deterministic tests are frozen and passing.
 
@@ -738,7 +753,7 @@ Confidence intervals use 10,000 deterministic bootstrap
 resamples by default; use `--seed` or `--bootstrap-resamples` explicitly when a
 different recorded analysis configuration is required.
 
-Launch the Streamlit research-results portal described above for interactive analysis.
+Launch the Observable research-results portal described above for interactive analysis.
 
 ---
 

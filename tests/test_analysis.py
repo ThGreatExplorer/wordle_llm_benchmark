@@ -22,19 +22,19 @@ def test_analysis_exports_metrics_bootstrap_parquet_and_plots(tmp_path: Path) ->
     summaries, proposals = [], []
     for condition, solved, score in (("hist_named", True, 2), ("hist_unnamed", False, 7)):
         summaries.append({
-            "run_id": "run", "model_key": "model", "condition": condition, "game_id": "hist_0001",
+            "run_id": f"run-{condition}", "model_key": "model", "condition": condition, "game_id": "hist_0001",
             "game_mode": "normal",
             "solved": solved, "round_score": score, "repair_attempt_count": 1,
             "repair_success_count": int(solved), "forfeit_count": int(not solved),
             "played_guess_count": int(solved),
         })
         proposals.extend([
-            {"run_id": "run", "model_key": "model", "condition": condition, "game_id": "hist_0001",
+            {"run_id": f"run-{condition}", "model_key": "model", "condition": condition, "game_id": "hist_0001",
              "decision_round": 1, "proposal_type": "initial",
              "game_mode": "normal",
              "evaluations": [evaluation("VALID", True), evaluation("VALID", True), evaluation("LEXICON_ERROR", None)],
              "information_gain": [1, .8, None], "ig_oracle": 2, "played": True},
-            {"run_id": "run", "model_key": "model", "condition": condition, "game_id": "hist_0001",
+            {"run_id": f"run-{condition}", "model_key": "model", "condition": condition, "game_id": "hist_0001",
              "decision_round": 2, "proposal_type": "initial",
              "game_mode": "normal",
              "evaluations": [evaluation("VALID", False, (1,)), evaluation("VALID", True), evaluation("VALID", True)],

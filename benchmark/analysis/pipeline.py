@@ -13,6 +13,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from benchmark.analysis.bootstrap import confidence_interval, independent_difference_interval
+from benchmark.analysis.schema import ANALYSIS_SCHEMA_VERSION, validate_analysis_snapshot
 from benchmark.experiment.batch import result_key
 from benchmark.experiment.manifests import file_sha256
 from benchmark.types import Condition, GameMode
@@ -32,7 +33,6 @@ REASONING_EFFECT_METRICS = (
     "mean_reasoning_tokens_per_game", "mean_latency_ms_per_game", "mean_cost_usd_per_game",
 )
 OPENAI_MODEL_KEYS = {"gpt4o", "gpt5", "gpt56", "gpt5_medium", "gpt56_medium"}
-ANALYSIS_SCHEMA_VERSION = "analysis-v1"
 
 
 def _model_family(model_key: str) -> str:
@@ -714,3 +714,4 @@ def analyze_results(
         "coverage_complete": all(row["complete"] for row in coverage_rows),
     }
     (output / "analysis_metadata.json").write_text(json.dumps(analysis_metadata, indent=2, sort_keys=True) + "\n")
+    validate_analysis_snapshot(output)

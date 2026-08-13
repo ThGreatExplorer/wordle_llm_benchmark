@@ -612,3 +612,24 @@ A good change should leave the repository in a state where:
 - raw model behavior is preserved rather than cleaned up;
 - configuration, not source-code edits, controls provider/model deployment details;
 - another researcher could understand how the result was generated.
+
+## Frontend visual verification
+
+For changes under `frontend/`, visual inspection is mandatory.
+
+When changing layout, typography, visualization, responsive behavior,
+or game-inspector UI:
+
+1. Start or reuse the Observable dev server.
+2. Open the affected page using the browser inspection tooling.
+3. Inspect the rendered result at desktop and mobile widths.
+4. Check browser console for errors.
+5. Check for overflow, clipping, overlap, poor spacing, and chart
+   readability.
+6. Capture visual evidence before/after where useful.
+7. Iterate until the rendered result is satisfactory.
+8. Run `npm run build`.
+9. Reinspect if the production build differs.
+
+Do not treat successful compilation or tests as proof that the UI is
+visually correct.

@@ -1,0 +1,20 @@
+{
+  "name": "frontend",
+  "version": "1.0.0",
+  "description": "Observable Framework results portal for the Wordle LLM Benchmark",
+  "scripts": {
+    "sync:data": "uv run --project .. python scripts/sync_analysis.py",
+    "predev": "npm run sync:data",
+    "dev": "OBSERVABLE_TELEMETRY_DISABLE=true observable preview",
+    "prebuild": "npm run sync:data",
+    "build": "OBSERVABLE_TELEMETRY_DISABLE=true observable build",
+    "test": "node --test"
+  },
+  "keywords": [],
+  "type": "module",
+  "dependencies": {
+    "@observablehq/framework": "^1.13.4",
+    "@observablehq/inputs": "^0.12.0",
+    "@observablehq/plot": "^0.6.17"
+  }
+}

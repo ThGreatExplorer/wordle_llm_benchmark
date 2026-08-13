@@ -5,6 +5,9 @@ build/
 dist/
 wheels/
 *.egg-info
+frontend/node_modules/
+frontend/src/.observablehq/
+frontend/src/data/analysis/
 
 # Virtual environments
 .venv

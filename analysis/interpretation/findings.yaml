@@ -1,0 +1,43 @@
+- id: enforcement_penalty
+  section: Normal vs Strict Enforcement
+  title: Strict enforcement changes solving performance
+  evidence:
+    table: enforcement
+    estimate: solve_penalty
+    completeness: pair_complete
+    filters:
+      model_family: gpt5
+      condition: hist_named
+      reasoning_setting: baseline
+  result_template: "The estimated normal-minus-strict Solve@6 penalty is {estimate:.1%}."
+  interpretation: A positive penalty is consistent with constraint enforcement suppressing performance available in normal play.
+  caveats: [mode_histories, partial_coverage]
+- id: named_effect
+  section: Named vs Unnamed Effect
+  title: Explicit task naming changes performance
+  evidence:
+    table: paired
+    metric: solve_at_6
+    estimate: delta
+    completeness: pair_complete
+    filters:
+      model_key: gpt5
+      game_mode: normal
+  result_template: "The paired named-minus-unnamed Solve@6 effect is {estimate:.1%}."
+  interpretation: A positive result is consistent with explicit task recognition helping solve performance.
+  caveats: [partial_coverage, hosted_nondeterminism]
+- id: reasoning_effect
+  section: Reasoning Effects
+  title: Medium reasoning changes Solve@6
+  evidence:
+    table: reasoning
+    metric: solve_at_6
+    estimate: delta_medium_minus_baseline
+    completeness: pair_complete
+    filters:
+      model_family: gpt5
+      condition: hist_named
+      game_mode: normal
+  result_template: "The paired medium-minus-baseline Solve@6 effect is {estimate:.1%}."
+  interpretation: The estimate measures the effect of additional inference-time reasoning with prompts held fixed.
+  caveats: [partial_coverage, hosted_nondeterminism]

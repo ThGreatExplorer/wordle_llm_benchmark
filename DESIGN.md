@@ -1519,7 +1519,15 @@ Implement in this order so external API cost is incurred only after deterministi
 - basic plots for Solve@6, round score, Action Valid@1, Constraint Consistent@1,
   Strict Valid@1, IG efficiency, repair success, and constraint age.
 - canonical completed-game and proposal Parquet tables;
-- one read-only local Streamlit research portal backed by DuckDB and Parquet.
+- one read-only local Observable Framework research portal backed by DuckDB-Wasm
+  and Parquet.
+
+Python analysis and the processed Parquet/schema contract remain authoritative and
+frontend-neutral. Observable owns only presentation, filtering, and client-side
+queries; no benchmark or statistical semantics depend on the frontend. The portal
+contains an editorial research report, coordinated Experiment Lab, and individual
+Game Inspector. Interpretation content is human-authored and kept separate from
+deterministically generated statistics.
 
 The analysis command may inspect incomplete runs, but only durable completed-game
 summaries are authoritative and orphan proposals are excluded. Partial paired

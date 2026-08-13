@@ -1,0 +1,45 @@
+{
+  "analysis_schema_version": "analysis-v1",
+  "benchmark_config_hashes": [
+    "f166cda3b712f7ef4776606e91f8258c403ba64ab3d269afdaf1477d4366d477"
+  ],
+  "benchmark_versions": [
+    "mvp-v4"
+  ],
+  "bootstrap_resamples": 10000,
+  "bootstrap_seed": 0,
+  "coverage_complete": false,
+  "generated_at_utc": "2026-08-13T03:45:49.198504+00:00",
+  "git_commit": "44d7e4d44f88aa287bf27a4b63baacdc50ca34e3",
+  "manifest_hashes": [
+    "3edd1a92371e6dd47a765d7dfddc19e6e526dee55f33f70dad1a684d163ef683",
+    "bb713167d14442df1286d2e46f1ee32c272a9d057a2738409d7eb3a5dcfab99f"
+  ],
+  "model_config_hashes": [],
+  "model_prefixes": [],
+  "prompt_versions": [
+    "prompt-v4"
+  ],
+  "provider": "openai",
+  "source_run_ids": [
+    "gpt4o-dynamic_256-normal-mvp-v4-eval-001",
+    "gpt4o-dynamic_256-strict-mvp-v4-eval-001",
+    "gpt4o-hist_named-normal-mvp-v4-eval-001",
+    "gpt4o-hist_named-strict-mvp-v4-eval-001",
+    "gpt4o-hist_unnamed-normal-mvp-v4-eval-001",
+    "gpt4o-hist_unnamed-strict-mvp-v4-eval-001",
+    "gpt5-dynamic_256-normal-mvp-v4-eval-001",
+    "gpt5-dynamic_256-strict-mvp-v4-eval-001",
+    "gpt5-hist_named-normal-mvp-v4-eval-001",
+    "gpt5-hist_named-strict-mvp-v4-eval-001",
+    "gpt5-hist_unnamed-normal-mvp-v4-eval-001",
+    "gpt5-hist_unnamed-strict-mvp-v4-eval-001",
+    "gpt56-dynamic_256-normal-mvp-v4-eval-001",
+    "gpt56-dynamic_256-strict-mvp-v4-eval-001",
+    "gpt56-hist_named-normal-mvp-v4-eval-001",
+    "gpt56-hist_named-strict-mvp-v4-eval-001",
+    "gpt56-hist_unnamed-normal-mvp-v4-eval-001",
+    "gpt56-hist_unnamed-strict-mvp-v4-eval-001"
+  ],
+  "split": "eval"
+}
