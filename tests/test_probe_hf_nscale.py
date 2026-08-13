@@ -32,6 +32,7 @@ def test_full_probe_uses_exact_pinned_contract() -> None:
         "model": "Qwen/Qwen3-8B:nscale",
         "messages": [{"role": "user", "content": request_for(MODELS[0])["messages"][0]["content"]}],
         "temperature": 0,
+        "max_tokens": 128,
         "reasoning_effort": "none",
         "response_format": SCHEMA_FORMAT,
     }

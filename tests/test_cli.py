@@ -64,6 +64,7 @@ def test_cli_runs_one_mock_game_from_frozen_dev_manifest(tmp_path, monkeypatch, 
         "run_id", "started_at_utc", "git_commit", "benchmark_version", "prompt_version",
         "manifest_hashes", "word_list_hashes", "models_config_hash", "benchmark_config_hash",
         "lock_hash", "python", "platform", "selected_manifest", "selected_model_config",
+        "reasoning_effort", "request_timeout_seconds", "max_output_tokens", "concurrency",
     } <= metadata.keys()
 
     monkeypatch.setattr(sys, "argv", [
@@ -97,3 +98,16 @@ def test_selected_game_subset_is_frozen_in_metadata(tmp_path) -> None:
     _freeze_metadata(path, base)
     with pytest.raises(ValueError, match="differs"):
         _freeze_metadata(path, base | {"selected_game_ids_hash": "second", "game_limit": 100})
+
+
+@pytest.mark.parametrize("field,new_value", [
+    ("reasoning_effort", "high"), ("request_timeout_seconds", 60),
+    ("max_output_tokens", 4096),
+])
+def test_reasoning_request_identity_is_frozen(tmp_path, field, new_value) -> None:
+    path = tmp_path / "metadata.json"
+    base = {"run_id": "run", "reasoning_effort": "medium",
+            "request_timeout_seconds": 120, "max_output_tokens": 2048}
+    _freeze_metadata(path, base)
+    with pytest.raises(ValueError, match="differs"):
+        _freeze_metadata(path, base | {field: new_value})

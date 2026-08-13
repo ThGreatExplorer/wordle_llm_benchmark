@@ -7,6 +7,7 @@ from benchmark.providers import (
     HuggingFaceNscaleAdapter, OpenAICompatibleAdapter, OpenAIResponsesAdapter,
 )
 from benchmark.providers.openai_responses import TOP_THREE_SCHEMA
+from benchmark.providers.openai_responses import RequestTimeoutError
 from scripts.probe_hf_nscale import request_for
 
 
@@ -32,6 +33,28 @@ def test_responses_adapter_is_stateless_and_captures_usage() -> None:
     assert (result.input_tokens, result.output_tokens, result.reasoning_tokens) == (10, 5, 2)
     assert endpoint.request["store"] is False
     assert "previous_response_id" not in endpoint.request and endpoint.request["input"] == "prompt"
+
+
+def test_reasoning_response_contract_and_full_call_timeout() -> None:
+    endpoint = Capture(NS(
+        output_text='{"guesses":["crane","slate","trace"]}', model="returned", _request_id="req",
+        usage=NS(input_tokens=10, output_tokens=5, output_tokens_details=NS(reasoning_tokens=2)),
+    ))
+    asyncio.run(OpenAIResponsesAdapter(
+        "requested", reasoning_effort="medium", request_timeout_seconds=120,
+        max_output_tokens=2048, client=NS(responses=endpoint),
+    ).predict("prompt"))
+    assert endpoint.request["reasoning"] == {"effort": "medium"}
+    assert endpoint.request["max_output_tokens"] == 2048
+
+    class Slow:
+        async def create(self, **request):
+            await asyncio.sleep(1)
+
+    with pytest.raises(RequestTimeoutError, match="REQUEST_TIMEOUT"):
+        asyncio.run(OpenAIResponsesAdapter(
+            "requested", request_timeout_seconds=.001, client=NS(responses=Slow())
+        ).predict("prompt"))
 
 
 def test_compatible_adapter_is_stateless_and_preserves_protocol_errors() -> None:

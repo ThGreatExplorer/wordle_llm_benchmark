@@ -57,7 +57,7 @@ def _positive_int(value: str) -> int:
 def _metadata(
     run_id: str, config_path: Path, models_path: Path, config: dict,
     model_key: str, selected_model: dict, manifest: Path, condition: Condition,
-    game_mode: GameMode, split: str, selected_game_ids: list[str],
+    game_mode: GameMode, split: str, selected_game_ids: list[str], concurrency: int,
 ) -> dict:
     metadata = {
         "run_id": run_id,
@@ -72,6 +72,7 @@ def _metadata(
         "game_mode": game_mode.value,
         "split": split,
         "requested_games": len(selected_game_ids),
+        "concurrency": concurrency,
         "selected_game_ids_hash": hashlib.sha256("\n".join(selected_game_ids).encode()).hexdigest(),
         "manifest_hashes": {
             path.name: _hash(path) for path in sorted(Path(config["manifests"]).glob("*.jsonl"))
@@ -86,7 +87,14 @@ def _metadata(
         "python": sys.version,
         "platform": platform.platform(),
         "selected_manifest": manifest.name,
+        "selected_manifest_hash": _hash(manifest),
         "selected_model_config": selected_model,
+        "provider": selected_model["provider"],
+        "requested_model_id": selected_model["model"],
+        "reasoning_effort": selected_model.get("reasoning_effort"),
+        "temperature": selected_model.get("temperature"),
+        "request_timeout_seconds": selected_model.get("request_timeout_seconds"),
+        "max_output_tokens": selected_model.get("max_output_tokens"),
     }
     if selected_model.get("provider") == "huggingface_nscale":
         metadata |= {
@@ -218,7 +226,7 @@ def main() -> None:
         output.mkdir(parents=True, exist_ok=True)
         metadata = _metadata(args.run_id, args.config, args.models_config, benchmark_config,
                              args.model, model_config, manifest, args.condition, args.mode,
-                             args.split, [game_id for game_id, _ in games])
+                             args.split, [game_id for game_id, _ in games], args.concurrency)
         metadata["game_limit"] = args.limit
         metadata_path = output / "metadata.json"
         _resume_metadata(metadata_path, metadata)
@@ -235,6 +243,8 @@ def main() -> None:
             adapter = OpenAIResponsesAdapter(
                 model_config["model"], reasoning_effort=model_config.get("reasoning_effort"),
                 temperature=model_config.get("temperature"),
+                request_timeout_seconds=model_config.get("request_timeout_seconds"),
+                max_output_tokens=model_config.get("max_output_tokens"),
             )
         elif model_config["provider"] == "huggingface_nscale":
             api_key_env = model_config.get("api_key_env", "HF_TOKEN")
@@ -256,6 +266,8 @@ def main() -> None:
             "provider": model_config["provider"], "requested_model_id": model_config["model"],
             "reasoning_effort": model_config.get("reasoning_effort"),
             "temperature": model_config.get("temperature"), "structured_output_enabled": True,
+            "request_timeout_seconds": model_config.get("request_timeout_seconds"),
+            "max_output_tokens": model_config.get("max_output_tokens"),
         }
         if model_config["provider"] == "huggingface_nscale":
             proposal_metadata |= {
@@ -296,7 +308,7 @@ def main() -> None:
         models_path = Path("configs/models.yaml")
         metadata = _metadata(args.run_id, args.config, models_path, config,
                              "mock", {"provider": "mock", "model": "deterministic-secret"},
-                             manifest, args.condition, args.mode, "dev", [game_id])
+                             manifest, args.condition, args.mode, "dev", [game_id], 1)
         _resume_metadata(output / "metadata.json", metadata)
         removed, incomplete = clean_partial_proposals(
             output / "proposals.jsonl", output / "summaries.jsonl"

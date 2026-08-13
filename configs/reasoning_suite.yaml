@@ -1,0 +1,17 @@
+models_config: configs/reasoning_models.yaml
+models:
+  - gpt5_medium
+  - gpt56_medium
+conditions:
+  - hist_named
+  - hist_unnamed
+  - dynamic_256
+modes:
+  - normal
+  - strict
+split: eval
+games_per_run: 150
+reasoning_effort: medium
+request_timeout_seconds: 120
+max_output_tokens: 2048
+concurrency: 4

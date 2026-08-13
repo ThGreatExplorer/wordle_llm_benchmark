@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 import pyarrow.parquet as pq
+import pytest
 
 from benchmark.analysis import analyze_results
 
@@ -101,3 +102,52 @@ def test_analysis_ignores_orphan_proposals(tmp_path: Path) -> None:
     analyze_results(tmp_path, tmp_path / "out", resamples=1)
     row = next(csv.DictReader((tmp_path / "out/metrics.csv").open()))
     assert float(row["initial_action_valid_at_1"]) == 1
+
+
+def test_reasoning_effect_and_enforcement_penalty_are_game_paired(tmp_path: Path) -> None:
+    summaries, proposals = [], []
+    for model, mode, solved, score, reasoning in (
+        ("gpt5", "normal", False, 7, 0), ("gpt5", "strict", False, 7, 0),
+        ("gpt5_medium", "normal", True, 3, 30), ("gpt5_medium", "strict", True, 4, 40),
+    ):
+        common = {"run_id": f"{model}-{mode}", "model_key": model,
+                  "condition": "hist_named", "game_mode": mode, "game_id": "hist_0001"}
+        summaries.append(common | {
+            "solved": solved, "round_score": score, "played_guess_count": 1,
+            "repair_attempt_count": 0, "repair_success_count": 0, "forfeit_count": 0,
+            "reasoning_tokens_total": reasoning, "latency_ms_total": 100,
+            "estimated_cost_usd_total": .01,
+        })
+        proposals.append(common | {
+            "decision_round": 1, "proposal_type": "initial", "played": True,
+            "evaluations": [evaluation("VALID", True)] * 3,
+            "information_gain": [1, .5, .25], "ig_oracle": 1,
+            "reasoning_tokens": reasoning, "latency_ms": 100,
+        })
+    write(tmp_path / "summaries.jsonl", summaries)
+    write(tmp_path / "proposals.jsonl", proposals)
+    analyze_results(tmp_path, tmp_path / "out", resamples=20, seed=1)
+
+    effects = list(csv.DictReader((tmp_path / "out/reasoning_effects.csv").open()))
+    solve = next(row for row in effects if row["game_mode"] == "normal" and row["metric"] == "solve_at_6")
+    assert float(solve["delta_medium_minus_baseline"]) == 1 and solve["pairs"] == "1"
+    reduction = next(csv.DictReader((tmp_path / "out/penalty_reduction.csv").open()))
+    assert float(reduction["penalty_reduction"]) == 0
+    assert len(list(csv.DictReader((tmp_path / "out/gpt5_reasoning_benchmark.csv").open()))) == 4
+
+
+def test_reasoning_comparison_rejects_unpaired_game_ids(tmp_path: Path) -> None:
+    summaries, proposals = [], []
+    for model, game_id in (("gpt5", "a"), ("gpt5_medium", "b")):
+        common = {"run_id": model, "model_key": model, "condition": "hist_named",
+                  "game_mode": "normal", "game_id": game_id}
+        summaries.append(common | {"solved": True, "round_score": 1, "played_guess_count": 1,
+                                    "repair_attempt_count": 0, "repair_success_count": 0,
+                                    "forfeit_count": 0})
+        proposals.append(common | {"decision_round": 1, "proposal_type": "initial",
+                                   "played": True, "evaluations": [evaluation("VALID", True)] * 3,
+                                   "information_gain": [1, 1, 1], "ig_oracle": 1})
+    write(tmp_path / "summaries.jsonl", summaries)
+    write(tmp_path / "proposals.jsonl", proposals)
+    with pytest.raises(ValueError, match="different game IDs"):
+        analyze_results(tmp_path, tmp_path / "out", resamples=1)

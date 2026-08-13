@@ -1,0 +1,17 @@
+models:
+  gpt5_medium:
+    provider: openai
+    model: gpt-5-2025-08-07
+    reasoning_effort: medium
+    request_timeout_seconds: 120
+    max_output_tokens: 2048
+    input_price_per_million: 1.25
+    output_price_per_million: 10
+  gpt56_medium:
+    provider: openai
+    model: gpt-5.6-sol
+    reasoning_effort: medium
+    request_timeout_seconds: 120
+    max_output_tokens: 2048
+    input_price_per_million: 5
+    output_price_per_million: 30

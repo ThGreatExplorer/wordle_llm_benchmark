@@ -3,6 +3,7 @@ import json
 import pytest
 
 from benchmark.experiment.batch import clean_partial_proposals, completed_game_ids, run_batch
+from benchmark.providers.openai_responses import RequestTimeoutError
 from benchmark.types import Condition, GameMode, GameState, ModelResponse
 
 
@@ -88,6 +89,23 @@ def test_orphan_proposals_are_cleaned_and_game_reruns(tmp_path) -> None:
     result = asyncio.run(run_batch(adapter, Condition.HIST_NAMED, [game], proposals, summaries,
                                    run_id="run", model_key="model"))
     assert len(result) == adapter.calls == 1
+
+
+def test_request_timeout_is_infrastructure_and_game_remains_incomplete(tmp_path) -> None:
+    class TimedOut:
+        async def predict(self, prompt: str) -> ModelResponse:
+            raise RequestTimeoutError("REQUEST_TIMEOUT")
+
+    game = ("game", GameState("slate", ("slate",), ("slate", "crane", "trace")))
+    proposals, summaries = tmp_path / "proposals.jsonl", tmp_path / "summaries.jsonl"
+    with pytest.raises(RequestTimeoutError):
+        asyncio.run(run_batch(
+            TimedOut(), Condition.HIST_NAMED, [game], proposals, summaries,
+            run_id="run", model_key="gpt5_medium",
+        ))
+    assert not summaries.exists()
+    event = json.loads((tmp_path / "infrastructure.jsonl").read_text())
+    assert event["error"] == "REQUEST_TIMEOUT" and event["game_id"] == "game"
 
 
 def test_resume_progress_and_existing_cost_guard(tmp_path, capsys) -> None:

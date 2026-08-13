@@ -66,6 +66,31 @@ For the main benchmark, use direct/non-thinking or the lowest practical reasonin
 
 All Qwen tracks MUST run through the dedicated stateless Hugging Face Inference Providers adapter using its OpenAI-compatible Chat Completions endpoint. Use the frozen model IDs `Qwen/Qwen3-8B:nscale`, `Qwen/Qwen3-14B:nscale`, and `Qwen/Qwen3-32B:nscale`, explicitly pinning Nscale for all sizes. Require strict structured output, disable reasoning with effort `none`, and record the exact requested and returned model metadata for every response.
 
+### Full OpenAI medium-reasoning ablation
+
+The primary six-model configurations remain unchanged. A secondary experiment uses
+separate `gpt5_medium` and `gpt56_medium` configurations with the same pinned GPT-5
+and GPT-5.6 model IDs, prompts, frozen instances, provider, and gameplay protocol as
+their baselines. The treatment is solely `reasoning.effort: medium`; it does not add
+reasoning instructions or collect visible chain of thought. Both treatment configs
+freeze a 120-second full-call timeout and 2,048 maximum output tokens.
+
+The secondary matrix is GPT-5 and GPT-5.6 × all three conditions × normal and strict
+mode × all 150 evaluation games: 12 resumable runs and 1,800 reasoning-enabled games.
+GPT-4o and all Qwen tracks are excluded. NORMAL primarily measures whether moderate
+inference-time computation improves general solving when constraint mistakes remain
+playable. STRICT measures exact cumulative constraint execution under enforcement.
+The interaction asks whether medium reasoning reduces the NORMAL-to-STRICT solve and
+score penalty. Named/unnamed and historical/dynamic comparisons remain condition-level
+analyses rather than being collapsed across conditions.
+
+Every baseline/treatment and normal/strict contrast is paired by exact game ID where
+the manifests share instances. Use 10,000 game-level paired bootstrap resamples and
+95% confidence intervals. Report reasoning tokens and latency per response and game,
+plus cost per game and in total. Before evaluation, run one development smoke game for
+each model × condition × mode cell and project the 12 evaluation-run costs separately;
+do not launch evaluation runs from the smoke workflow.
+
 ---
 
 ## 4. Frozen experimental matrix
@@ -1182,6 +1207,11 @@ latency_ms_total
 Do not hard-code current public prices into analysis code. Put per-million token prices in model configuration so they can be updated immediately before the final run.
 
 For every response, capture provider-reported input/output/reasoning token usage when available and compute estimated cost from the run's frozen pricing config.
+
+For reasoning-treatment runs, `request_timeout_seconds` covers the complete logical
+adapter call, including SDK retries. A timeout is logged separately as
+`REQUEST_TIMEOUT`; it is an infrastructure failure, leaves the game incomplete for
+whole-game resume, and never enters the model validity or repair taxonomy.
 
 Implement:
 

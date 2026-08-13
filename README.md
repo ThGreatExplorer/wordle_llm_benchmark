@@ -515,6 +515,50 @@ uv run python -m benchmark analyze --results results/<run-id>
 
 Do not start the 150-game evaluation split until development runs, prompt checks, manifest hashes, and deterministic tests are frozen and passing.
 
+### OpenAI medium-reasoning secondary suite
+
+The primary entries in `configs/models.yaml` remain frozen. The secondary suite is
+declared in `configs/reasoning_suite.yaml`, and its two treatment entries live in
+`configs/reasoning_models.yaml`. It contains GPT-5 and GPT-5.6 only, with medium
+reasoning, all three conditions, both modes, and 150 frozen evaluation games per run
+(12 runs; 1,800 treatment games).
+
+Run one development smoke cell at a time before evaluation:
+
+```bash
+uv run python -m benchmark run \
+  --models-config configs/reasoning_models.yaml \
+  --model gpt5_medium \
+  --condition hist_named \
+  --mode normal \
+  --split dev \
+  --limit 1 \
+  --run-id gpt5-hist-named-normal-medium-dev
+```
+
+Repeat development validation for GPT-5/GPT-5.6, all three conditions, and both
+modes. Use each cell's recorded mean cost per game to project its own 150-game cost;
+do not extrapolate dynamic or strict runs from a historical normal smoke test.
+
+After all smoke tests, cost projections, and deterministic tests pass, an evaluation
+cell uses the same command with `--split eval`, no `--limit`, an explicit cost guard,
+and initially `--concurrency 4`:
+
+```bash
+uv run python -m benchmark run \
+  --models-config configs/reasoning_models.yaml \
+  --model gpt5_medium \
+  --condition hist_named \
+  --mode normal \
+  --split eval \
+  --concurrency 4 \
+  --max-cost-usd <approved-run-budget> \
+  --run-id gpt5-hist-named-normal-medium-eval
+```
+
+Use a distinct run ID for each matrix cell. Resume an interruption only by rerunning
+the identical command with the same run ID.
+
 ---
 
 ## Model configuration

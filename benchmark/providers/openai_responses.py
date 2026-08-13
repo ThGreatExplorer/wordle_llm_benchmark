@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
@@ -23,6 +24,10 @@ TOP_THREE_SCHEMA = {
 }
 
 
+class RequestTimeoutError(TimeoutError):
+    code = "REQUEST_TIMEOUT"
+
+
 class OpenAIResponsesAdapter:
     def __init__(
         self,
@@ -30,11 +35,15 @@ class OpenAIResponsesAdapter:
         *,
         reasoning_effort: str | None = None,
         temperature: float | None = None,
+        request_timeout_seconds: float | None = None,
+        max_output_tokens: int | None = None,
         client: Any | None = None,
     ) -> None:
         self.model = model
         self.reasoning_effort = reasoning_effort
         self.temperature = temperature
+        self.request_timeout_seconds = request_timeout_seconds
+        self.max_output_tokens = max_output_tokens
         self.client = client or AsyncOpenAI(max_retries=3, timeout=120.0)
 
     async def predict(self, prompt: str) -> ModelResponse:
@@ -49,9 +58,17 @@ class OpenAIResponsesAdapter:
             request["reasoning"] = {"effort": self.reasoning_effort}
         if self.temperature is not None:
             request["temperature"] = self.temperature
+        if self.max_output_tokens is not None:
+            request["max_output_tokens"] = self.max_output_tokens
 
         started = time.perf_counter()
-        response = await self.client.responses.create(**request)
+        try:
+            async with asyncio.timeout(self.request_timeout_seconds):
+                response = await self.client.responses.create(**request)
+        except TimeoutError as exc:
+            raise RequestTimeoutError(
+                f"REQUEST_TIMEOUT after {self.request_timeout_seconds} seconds"
+            ) from exc
         latency = (time.perf_counter() - started) * 1000
         raw = response.output_text
         guesses = parse_top_three(raw)

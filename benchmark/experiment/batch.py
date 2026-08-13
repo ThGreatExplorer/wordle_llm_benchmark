@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from datetime import datetime, timezone
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -111,10 +112,25 @@ async def run_batch(
 
     async def run(item: tuple[str, GameState]) -> tuple[str, GameResult]:
         async with semaphore:
-            return item[0], await run_game(
-                adapter, condition, item[1], game_mode=game_mode, input_price_per_million=prices[0],
-                output_price_per_million=prices[1], reasoning_price_per_million=prices[2],
-            )
+            try:
+                return item[0], await run_game(
+                    adapter, condition, item[1], game_mode=game_mode,
+                    input_price_per_million=prices[0], output_price_per_million=prices[1],
+                    reasoning_price_per_million=prices[2],
+                )
+            except Exception as exc:
+                if getattr(exc, "code", None) == "REQUEST_TIMEOUT":
+                    path = proposal_path.with_name("infrastructure.jsonl")
+                    with path.open("a") as handle:
+                        handle.write(json.dumps({
+                            **(metadata or {}), "run_id": run_id, "model_key": model_key,
+                            "condition": condition.value, "game_mode": game_mode.value,
+                            "game_id": item[0], "error": "REQUEST_TIMEOUT",
+                            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                        }, separators=(",", ":")) + "\n")
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                raise
 
     spent = existing_cost(summary_path, run_id, model_key, condition, game_mode)
     prior_rows = [row for row in completed_rows(summary_path) if result_key(row)[:4] == (

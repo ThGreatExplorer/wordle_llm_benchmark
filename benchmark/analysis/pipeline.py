@@ -4,7 +4,7 @@ import csv
 import json
 from collections import defaultdict
 from pathlib import Path
-from statistics import mean
+from statistics import mean, median
 from typing import Any
 
 import pyarrow as pa
@@ -13,6 +13,7 @@ import pyarrow.parquet as pq
 from benchmark.analysis.bootstrap import confidence_interval
 from benchmark.analysis.dashboard import write_dashboard
 from benchmark.experiment.batch import result_key
+from benchmark.types import Condition, GameMode
 
 METRICS = (
     "solve_at_6", "mean_round_score", "played_guesses_per_game",
@@ -22,6 +23,20 @@ METRICS = (
     "ranking_regret", "total_regret", "repair_success_rate", "forfeits_per_game",
     "forfeit_rate", "repeat_rate",
 )
+
+REASONING_EFFECT_METRICS = (
+    "solve_at_6", "mean_round_score", "constraint_consistent_at_1", "strict_valid_at_1",
+    "repair_success_rate", "forfeits_per_game", "ig_efficiency",
+    "mean_reasoning_tokens_per_game", "mean_latency_ms_per_game", "mean_cost_usd_per_game",
+)
+
+
+def _model_family(model_key: str) -> str:
+    return model_key.removesuffix("_medium")
+
+
+def _reasoning_setting(model_key: str) -> str:
+    return "medium" if model_key.endswith("_medium") else "baseline"
 
 
 def _read(paths: list[Path]) -> list[dict[str, Any]]:
@@ -89,6 +104,11 @@ def aggregate(summaries: list[dict[str, Any]], proposals: list[dict[str, Any]]) 
     for row in proposals:
         rounds_by_game[row["game_id"]] = max(rounds_by_game[row["game_id"]], row["decision_round"])
     rounds = sum(rounds_by_game.values())
+    reasoning_response = [row["reasoning_tokens"] for row in proposals if row.get("reasoning_tokens") is not None]
+    reasoning_game = [row.get("reasoning_tokens_total") or 0 for row in summaries]
+    latency_response = [row["latency_ms"] for row in proposals if row.get("latency_ms") is not None]
+    latency_game = [row["latency_ms_total"] for row in summaries if row.get("latency_ms_total") is not None]
+    costs = [row["estimated_cost_usd_total"] for row in summaries if row.get("estimated_cost_usd_total") is not None]
     return {
         "games": len(summaries),
         "solve_at_6": _mean([row["solved"] for row in summaries]),
@@ -102,6 +122,15 @@ def aggregate(summaries: list[dict[str, Any]], proposals: list[dict[str, Any]]) 
         ),
         "forfeit_rate": sum(row["forfeit_count"] for row in summaries) / rounds if rounds else None,
         "forfeits_per_game": _mean([row["forfeit_count"] for row in summaries]),
+        "mean_reasoning_tokens_per_response": _mean(reasoning_response),
+        "median_reasoning_tokens_per_response": median(reasoning_response) if reasoning_response else None,
+        "mean_reasoning_tokens_per_game": _mean(reasoning_game),
+        "median_reasoning_tokens_per_game": median(reasoning_game) if reasoning_game else None,
+        "total_reasoning_tokens": sum(reasoning_game),
+        "mean_latency_ms_per_response": _mean(latency_response),
+        "mean_latency_ms_per_game": _mean(latency_game),
+        "mean_cost_usd_per_game": _mean(costs),
+        "total_cost_usd": sum(costs) if len(costs) == len(summaries) else None,
     }
 
 
@@ -166,7 +195,9 @@ def analyze_results(results: Path, output: Path, *, resamples: int = 10_000, see
     metric_rows = []
     for key in sorted(summary_groups):
         group_summaries, group_proposals = summary_groups[key], proposal_groups[key]
-        row = {"model_key": key[0], "condition": key[1], "game_mode": key[2],
+        row = {"model_key": key[0], "model_family": _model_family(key[0]),
+               "reasoning_setting": _reasoning_setting(key[0]),
+               "condition": key[1], "game_mode": key[2],
                **aggregate(group_summaries, group_proposals)}
         by_game = {summary["game_id"]: summary for summary in group_summaries}
         game_proposals = defaultdict(list)
@@ -180,6 +211,101 @@ def analyze_results(results: Path, output: Path, *, resamples: int = 10_000, see
             )
             row[f"{metric}_ci_low"], row[f"{metric}_ci_high"] = low, high
         metric_rows.append(row)
+
+    def game_values(key: tuple[str, str, str], metric: str) -> dict[str, float]:
+        grouped = defaultdict(list)
+        for proposal in proposal_groups[key]:
+            grouped[proposal["game_id"]].append(proposal)
+        return {
+            summary["game_id"]: value
+            for summary in summary_groups[key]
+            if (value := _game_metric(summary, grouped[summary["game_id"]], metric)) is not None
+        }
+
+    def require_paired(left: tuple[str, str, str], right: tuple[str, str, str]) -> None:
+        left_rows, right_rows = summary_groups[left], summary_groups[right]
+        if {row["game_id"] for row in left_rows} != {row["game_id"] for row in right_rows}:
+            raise ValueError(f"paired comparison has different game IDs: {left} vs {right}")
+        for field in ("benchmark_version", "prompt_version", "requested_model_id", "provider",
+                      "manifest_hash", "temperature"):
+            left_values = {row.get(field) for row in left_rows}
+            right_values = {row.get(field) for row in right_rows}
+            if left_values != right_values and left_values != {None} and right_values != {None}:
+                raise ValueError(f"paired comparison differs in {field}: {left} vs {right}")
+
+    reasoning_effects = []
+    for family in ("gpt5", "gpt56"):
+        for condition in Condition:
+            for mode in GameMode:
+                baseline, medium = (family, condition.value, mode.value), (
+                    f"{family}_medium", condition.value, mode.value,
+                )
+                if baseline not in summary_groups or medium not in summary_groups:
+                    continue
+                require_paired(baseline, medium)
+                for offset, metric in enumerate(REASONING_EFFECT_METRICS):
+                    left, right = game_values(baseline, metric), game_values(medium, metric)
+                    ids = sorted(left.keys() & right.keys())
+                    pairs = [(left[game_id], right[game_id]) for game_id in ids]
+                    low, high = confidence_interval(
+                        pairs, lambda sample: _mean([medium_value - base for base, medium_value in sample]),
+                        resamples=resamples, seed=seed + offset,
+                    )
+                    reasoning_effects.append({
+                        "model_family": family, "condition": condition.value,
+                        "game_mode": mode.value, "metric": metric, "pairs": len(pairs),
+                        "delta_medium_minus_baseline": _mean([b - a for a, b in pairs]),
+                        "ci_low": low, "ci_high": high,
+                    })
+
+    enforcement = []
+    penalties: dict[tuple[str, str, str], dict[str, float]] = {}
+    for model_key in ("gpt5", "gpt5_medium", "gpt56", "gpt56_medium"):
+        for condition in Condition:
+            normal = model_key, condition.value, "normal"
+            strict = model_key, condition.value, "strict"
+            if normal not in summary_groups or strict not in summary_groups:
+                continue
+            require_paired(normal, strict)
+            normal_solve, strict_solve = game_values(normal, "solve_at_6"), game_values(strict, "solve_at_6")
+            normal_score, strict_score = game_values(normal, "mean_round_score"), game_values(strict, "mean_round_score")
+            ids = sorted(normal_solve.keys() & strict_solve.keys() & normal_score.keys() & strict_score.keys())
+            solve_pairs = [(normal_solve[i], strict_solve[i]) for i in ids]
+            score_pairs = [(normal_score[i], strict_score[i]) for i in ids]
+            solve_penalty = _mean([normal_value - strict_value for normal_value, strict_value in solve_pairs])
+            score_penalty = _mean([strict_value - normal_value for normal_value, strict_value in score_pairs])
+            enforcement.append({
+                "model_family": _model_family(model_key),
+                "reasoning_setting": _reasoning_setting(model_key), "condition": condition.value,
+                "pairs": len(ids), "normal_solve": _mean(list(normal_solve.values())),
+                "strict_solve": _mean(list(strict_solve.values())), "solve_penalty": solve_penalty,
+                "normal_score": _mean(list(normal_score.values())),
+                "strict_score": _mean(list(strict_score.values())), "score_penalty": score_penalty,
+            })
+            penalties[_model_family(model_key), condition.value, _reasoning_setting(model_key)] = {
+                game_id: normal_solve[game_id] - strict_solve[game_id] for game_id in ids
+            }
+
+    penalty_reductions = []
+    for family in ("gpt5", "gpt56"):
+        for condition in Condition:
+            baseline = penalties.get((family, condition.value, "baseline"), {})
+            medium = penalties.get((family, condition.value, "medium"), {})
+            ids = sorted(baseline.keys() & medium.keys())
+            pairs = [(baseline[i], medium[i]) for i in ids]
+            if not pairs:
+                continue
+            low, high = confidence_interval(
+                pairs, lambda sample: _mean([base - med for base, med in sample]),
+                resamples=resamples, seed=seed,
+            )
+            penalty_reductions.append({
+                "model_family": family, "condition": condition.value, "pairs": len(pairs),
+                "baseline_penalty": _mean([a for a, _ in pairs]),
+                "medium_penalty": _mean([b for _, b in pairs]),
+                "penalty_reduction": _mean([a - b for a, b in pairs]),
+                "ci_low": low, "ci_high": high,
+            })
 
     age_counts: dict[tuple[str, str, str, int], list[int]] = defaultdict(lambda: [0, 0])
     played_rounds: dict[tuple[str, str, str, str], set[int]] = defaultdict(set)
@@ -224,8 +350,11 @@ def analyze_results(results: Path, output: Path, *, resamples: int = 10_000, see
 
     contrasts = []
     for model, mode in sorted({(key[0], key[2]) for key in summary_groups}):
-        named = {row["game_id"]: row for row in summary_groups.get((model, "hist_named", mode), [])}
-        unnamed = {row["game_id"]: row for row in summary_groups.get((model, "hist_unnamed", mode), [])}
+        named_key, unnamed_key = (model, "hist_named", mode), (model, "hist_unnamed", mode)
+        named = {row["game_id"]: row for row in summary_groups.get(named_key, [])}
+        unnamed = {row["game_id"]: row for row in summary_groups.get(unnamed_key, [])}
+        if named and unnamed:
+            require_paired(named_key, unnamed_key)
         ids = sorted(named.keys() & unnamed.keys())
         if not ids:
             continue
@@ -247,6 +376,29 @@ def analyze_results(results: Path, output: Path, *, resamples: int = 10_000, see
     _write_table(age_rows, output / "constraint_age", ["model_key", "condition", "game_mode", "clue_age", "violations", "exposures", "violation_rate"])
     _write_table(round_rows, output / "consistency_by_round", ["model_key", "condition", "game_mode", "decision_round", "consistent", "action_valid", "consistency_rate"])
     _write_table(contrasts, output / "paired_contrasts", ["model_key", "game_mode", "contrast", "metric", "pairs", "delta", "ci_low", "ci_high"])
+    _write_table(reasoning_effects, output / "reasoning_effects", [
+        "model_family", "condition", "game_mode", "metric", "pairs",
+        "delta_medium_minus_baseline", "ci_low", "ci_high",
+    ])
+    _write_table(enforcement, output / "enforcement_penalty", [
+        "model_family", "reasoning_setting", "condition", "pairs", "normal_solve",
+        "strict_solve", "solve_penalty", "normal_score", "strict_score", "score_penalty",
+    ])
+    _write_table(penalty_reductions, output / "penalty_reduction", [
+        "model_family", "condition", "pairs", "baseline_penalty", "medium_penalty",
+        "penalty_reduction", "ci_low", "ci_high",
+    ])
+    reasoning_columns = [
+        "condition", "game_mode", "reasoning_setting", "solve_at_6",
+        "constraint_consistent_at_1", "strict_valid_at_1", "forfeits_per_game",
+        "ig_efficiency", "mean_cost_usd_per_game",
+    ]
+    for family in ("gpt5", "gpt56"):
+        _write_table(
+            [{column: row[column] for column in reasoning_columns} for row in metric_rows
+             if row["model_family"] == family],
+            output / f"{family}_reasoning_benchmark", reasoning_columns,
+        )
     for metric in ("solve_at_6", "mean_round_score", "initial_action_valid_at_1",
                    "constraint_consistent_at_1", "strict_valid_at_1", "ig_efficiency",
                    "repair_success_rate"):
