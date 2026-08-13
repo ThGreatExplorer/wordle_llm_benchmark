@@ -7,6 +7,7 @@ from benchmark.providers import (
     HuggingFaceNscaleAdapter, OpenAICompatibleAdapter, OpenAIResponsesAdapter,
 )
 from benchmark.providers.openai_responses import TOP_THREE_SCHEMA
+from scripts.probe_hf_nscale import request_for
 
 
 class Capture:
@@ -98,3 +99,11 @@ def test_huggingface_nscale_adapter_configures_bounded_sdk_retries(monkeypatch) 
         "api_key": "key", "base_url": "https://router.huggingface.co/v1",
         "max_retries": 5, "timeout": 120.0,
     }
+
+
+def test_hf_probe_caps_generation_under_exact_contract() -> None:
+    request = request_for("Qwen/Qwen3-8B:nscale")
+    assert request["max_tokens"] == 128
+    assert request["reasoning_effort"] == "none"
+    assert request["temperature"] == 0
+    assert request["response_format"]["json_schema"]["strict"] is True

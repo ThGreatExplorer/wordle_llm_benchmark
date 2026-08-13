@@ -33,10 +33,13 @@ SCHEMA_FORMAT = {
 }
 
 
-def request_for(model: str, stage: str = "full", prompt: str = PROMPT) -> dict[str, Any]:
+def request_for(
+    model: str, stage: str = "full", prompt: str = PROMPT, max_tokens: int = 128,
+) -> dict[str, Any]:
     request: dict[str, Any] = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
     }
     if stage in {"temperature", "reasoning", "schema", "full"}:
         request["temperature"] = 0
@@ -56,10 +59,12 @@ def _error(exc: Exception) -> dict[str, Any]:
     }
 
 
-async def attempt(client: Any, model: str, stage: str, prompt: str = PROMPT) -> dict[str, Any]:
+async def attempt(
+    client: Any, model: str, stage: str, prompt: str = PROMPT, max_tokens: int = 128,
+) -> dict[str, Any]:
     started = time.perf_counter()
     try:
-        response = await client.chat.completions.create(**request_for(model, stage, prompt))
+        response = await client.chat.completions.create(**request_for(model, stage, prompt, max_tokens))
     except Exception as exc:
         return {"stage": stage, "latency_ms": (time.perf_counter() - started) * 1000, **_error(exc)}
 
@@ -71,6 +76,7 @@ async def attempt(client: Any, model: str, stage: str, prompt: str = PROMPT) -> 
         "stage": stage,
         "ok": guesses is not None if stage in {"schema", "full"} else True,
         "requested_model": model,
+        "max_tokens": max_tokens,
         "returned_model": getattr(response, "model", None),
         "request_id": getattr(response, "_request_id", None),
         "input_tokens": getattr(usage, "prompt_tokens", None),
@@ -83,8 +89,10 @@ async def attempt(client: Any, model: str, stage: str, prompt: str = PROMPT) -> 
     }
 
 
-async def probe_model(client: Any, model: str, prompt: str = PROMPT) -> dict[str, Any]:
-    full = await attempt(client, model, "full", prompt)
+async def probe_model(
+    client: Any, model: str, prompt: str = PROMPT, max_tokens: int = 128,
+) -> dict[str, Any]:
+    full = await attempt(client, model, "full", prompt, max_tokens)
     if full["ok"]:
         return {"model": model, "passed": True, "attempts": [full]}
     if full.get("status_code") is None and full.get("protocol_error"):
@@ -92,16 +100,18 @@ async def probe_model(client: Any, model: str, prompt: str = PROMPT) -> dict[str
 
     attempts = [full]
     for stage in ("basic", "temperature", "reasoning", "schema"):
-        result = await attempt(client, model, stage, prompt)
+        result = await attempt(client, model, stage, prompt, max_tokens)
         attempts.append(result)
         if not result["ok"]:
             break
     return {"model": model, "passed": attempts[-1]["ok"], "attempts": attempts}
 
 
-async def run(models: tuple[str, ...], token: str, prompt: str = PROMPT) -> list[dict[str, Any]]:
+async def run(
+    models: tuple[str, ...], token: str, prompt: str = PROMPT, max_tokens: int = 128,
+) -> list[dict[str, Any]]:
     client = AsyncOpenAI(base_url=BASE_URL, api_key=token, max_retries=0, timeout=120.0)
-    return [await probe_model(client, model, prompt) for model in models]
+    return [await probe_model(client, model, prompt, max_tokens) for model in models]
 
 
 def dynamic_prompt() -> str:
@@ -118,12 +128,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Probe the frozen HF/Nscale Qwen request contract")
     parser.add_argument("--model", action="append", choices=MODELS, dest="models")
     parser.add_argument("--dynamic-prompt", action="store_true")
+    parser.add_argument("--max-tokens", type=int, default=128)
     args = parser.parse_args()
     token = os.environ.get("HF_TOKEN")
     if not token:
         raise SystemExit("HF_TOKEN is required")
     results = asyncio.run(run(
-        tuple(args.models or MODELS), token, dynamic_prompt() if args.dynamic_prompt else PROMPT
+        tuple(args.models or MODELS), token, dynamic_prompt() if args.dynamic_prompt else PROMPT,
+        args.max_tokens,
     ))
     print(json.dumps(results, indent=2))
     raise SystemExit(0 if all(result["passed"] for result in results) else 1)
