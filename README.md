@@ -1,911 +1,382 @@
 # Wordle LLM Benchmark
 
-A reproducible Python benchmark for studying **multi-turn lexical constraint reasoning** in language models using controlled Wordle-style environments.
+A contamination-resistant benchmark for multi-turn lexical constraint tracking in
+language models.
 
-The project compares frontier, legacy, and open-weight models on their ability to:
+Modern LLMs can solve difficult coding and mathematics tasks, but those successes
+can be difficult to separate from learned patterns, tool use, or benchmark
+familiarity. Wordle offers a simpler, auditable test: can a model carry forward a
+small set of positional, membership, exclusion, and duplicate-letter constraints
+over several turns?
 
-- maintain hard letter/position constraints across turns;
-- generate legal candidate guesses;
-- choose strategically informative guesses;
-- rank strong candidates among their top three suggestions; and
-- recover from an invalid guess after one explicit verifier rejection.
+This repository contains the deterministic game engine, frozen manifests, stateless
+provider harness, analysis pipeline, and Observable Framework results portal used in
+the final project report:
 
-The benchmark is intentionally more than a Wordle leaderboard. Wordle is used as a deterministic environment for studying constraint tracking, lexical reasoning, information seeking, ranking, and self-correction.
+> **Do LLMs Actually Reason About Wordle?**
+>
+> *A Contamination-Resistant Benchmark for Multi-Turn Constraint Tracking*
 
-> **Implementation note:** `DESIGN.md` is the canonical experiment specification. `AGENTS.md` contains coding-agent instructions. If you are using Codex, give it both files before asking it to implement the project.
-
----
+The complete report is available in
+[`wordle_llm_benchmark_final_report_with_results.docx`](wordle_llm_benchmark_final_report_with_results.docx).
 
 ## Research questions
 
-**RQ1.** How does multi-turn word-constraint reasoning vary across frontier, legacy, and open-weight language models?
+1. How does multi-turn word-constraint reasoning vary across frontier and legacy
+   language models?
+2. How much does recognizing the task as Wordle improve performance?
+3. Does replacing the historical answer distribution with dynamically generated
+   candidate spaces reduce frontier-model saturation?
+4. How does explicit inference-time reasoning effort change performance?
 
-**RQ2.** How much does recognizing the task as Wordle improve performance?
+## Part 1 MVP
 
-**RQ3.** Does changing Wordle from a fixed historical answer distribution to dynamically generated candidate spaces reduce frontier-model saturation?
-
----
-
-## Experimental conditions
-
-The frozen MVP contains three conditions.
-
-| Condition | Task name exposed? | Secret universe | Legal guesses | Evaluation games |
-|---|---|---|---|---:|
-| `hist_named` | Yes — Wordle | Original 2022 Wordle solution list | Original 2022 Wordle legal-guess list | 150 |
-| `hist_unnamed` | No | Same historical solution list | Same historical legal-guess list | 150 |
-| `dynamic_256` | No | Fresh frozen 256-word pool per instance | Exactly those same 256 words | 150 |
-
-`hist_named` and `hist_unnamed` use the **same 150 secrets**, allowing a paired comparison that isolates the effect of recognizing the game as Wordle.
-
-`dynamic_256` contains 150 independently generated and frozen candidate pools. Each model receives the exact same pools, secrets, and candidate ordering.
-
-The Part 1 MVP has three primary model tracks:
+The completed Part 1 MVP compares three OpenAI model tracks:
 
 - GPT-4o
 - GPT-5
 - GPT-5.6
 
-Qwen3 8B, 14B, and 32B are deferred to Part 2. They are not required for MVP
-completion and are excluded from the primary MVP analysis.
+Each model is evaluated on 150 frozen games in three conditions:
 
-NORMAL mode is the primary general-solving evaluation:
+| Condition | Task name exposed? | Secret universe | Legal guesses |
+|---|---|---|---|
+| `hist_named` | Yes | Original 2022 Wordle answers | Original historical legal-guess set |
+| `hist_unnamed` | No | Same 150 historical secrets | Same historical legal-guess set |
+| `dynamic_256` | No | Frozen 256-word pool per game | Exactly that game's 256 words |
+
+The primary normal-mode matrix contains:
 
 ```text
 3 models × 3 conditions × 150 games = 1,350 games
 ```
 
-Constraint enforcement is a separate explicit dimension:
-
-- `normal` plays every structurally and lexically legal top-1 while recording
-  exact constraint consistency.
-- `strict` preserves the constraint-enforced protocol: an inconsistent top-1
-  receives one repair attempt and a failed repair forfeits the round.
-
-STRICT is an additional scientifically meaningful evaluation, not a deprecated
-mode. The harness supports both modes without automatically doubling the primary
-matrix.
-
-Separate development manifests are used for debugging and provider integration before the evaluation manifests are touched.
-
----
-
-## Core game protocol
-
-Each game has at most **six decision rounds**.
-
-On every normal round, the benchmark constructs a fresh prompt from:
-
-1. the game rules;
-2. condition-specific instance information; and
-3. the complete accepted public guess/feedback history.
-
-The model returns its **top three ranked guesses**.
-
-Only guess #1 is used as the proposed game action. Guesses #2 and #3 are recorded for behavioral analysis but are not inserted into the next normal-turn prompt.
-
-The benchmark validates the proposed top-1 guess locally.
-
-Every suggestion receives an action status:
-
-```text
-FORMAT_ERROR
-LEXICON_ERROR
-VALID
-```
-
-Every action-valid suggestion separately receives
-`constraint_consistent: true|false`. In NORMAL, an inconsistent legal top-1 is
-played and receives feedback. In STRICT, it is surfaced to repair as
-`CONSTRAINT_ERROR` and blocked unless repaired.
-
-If the initial top-1 guess is invalid, the model receives exactly **one repair attempt** containing the error class but not the exact violated clue.
-
-If the repair is valid, it becomes the round's accepted guess. If the repair is still invalid, that decision round is forfeited.
-
-The benchmark never silently replaces an invalid top-1 guess with guess #2 or guess #3.
-
----
-
-## Stateless model evaluation
-
-LLM conversation state is deliberately not persisted.
-
-Every turn is a new model request containing the reconstructed public game state. Provider-side conversation IDs, prior response IDs, or equivalent session mechanisms must not be used by the benchmark core.
-
-This ensures that:
-
-- games cannot leak information into one another;
-- provider-specific conversation implementations do not affect the benchmark;
-- every model is evaluated from the same explicit observable state.
-
-Infrastructure retries such as HTTP timeouts are distinct from experimental repair attempts. A transport retry does not count as a model error; an invalid word does.
-
----
-
-## Deterministic local evaluator
-
-The Python benchmark is authoritative for:
-
-- Wordle feedback;
-- repeated-letter semantics;
-- legal-word validation;
-- hard-mode constraint consistency;
-- feasible candidate sets;
-- information gain;
-- game state;
-- win/loss status;
-- experiment metrics.
-
-Models are never asked to grade themselves.
-
-### Feedback labels
-
-All conditions use the same neutral labels:
-
-- `EXACT` — correct letter in the correct position;
-- `PRESENT` — the letter occurs in another still-unmatched position;
-- `ABSENT` — no unmatched occurrence of that letter remains.
-
-The scorer uses standard two-pass Wordle duplicate-letter handling: exact matches are consumed first, followed by remaining misplaced matches.
-
-Historical information-gain analysis uses the frozen compact feedback matrix at
-`data/frozen/historical_feedback.bin`. This removes the multi-minute first-game
-warm-up while preserving the exact deterministic scorer's feedback partitions.
-
-A candidate word is hard-mode-consistent with the history when it would reproduce every feedback pattern already observed:
-
-```python
-all(
-    score(candidate, previous_guess) == previous_feedback
-    for previous_guess, previous_feedback in history
-)
-```
-
----
-
-## Dynamic vocabulary
-
-The dynamic benchmark uses a frozen five-letter vocabulary built from:
-
-1. SCOWL level 60 American English;
-2. intersected with the `wordfreq` small/common English vocabulary;
-3. filtered to lowercase ASCII alphabetic words of length five; and
-4. with the original historical Wordle answer list removed.
-
-The resulting master vocabulary is generated once, normalized, hashed, and frozen.
-
-Each `dynamic_256` game samples 256 unique words from this master vocabulary. The secret is selected from that same pool. The full materialized pool and secret are stored in the manifest and reused across every model.
-
-Benchmark execution does **not** regenerate pools dynamically.
-
----
-
-## Main metrics
-
-### Primary outcome metrics
-
-**Solve@6**
-
-Fraction of games solved within six decision rounds.
-
-**Mean decision-round score**
-
-Solved games receive the round in which they were solved; unsolved games receive a score of 7.
-
-This prevents a model with many failures from looking artificially efficient when averaging only successful games.
-
-### Constraint fidelity
-
-**Action Valid@1/@3** — structural/lexical legality over initial top-1/all slots.
-
-**Constraint Consistent@1/@3** — exact replay consistency among action-valid guesses.
-
-**Strict Valid@1/@3** — action validity and constraint consistency jointly,
-retaining comparability with older `Valid` metrics.
-
-### Strategic quality
-
-For every state, the deterministic solver computes expected information gain for every currently legal guess.
-
-NORMAL uses a full legal-guess oracle; STRICT uses the current strict-consistent
-legal-guess oracle. Regret values always identify the mode/oracle definition.
-
-This supports:
-
-- normalized information efficiency;
-- search regret — whether the model failed to generate a strong guess anywhere in its top three;
-- ranking regret — whether the model generated a stronger option but ranked a weaker one first.
-
-### Multi-turn constraint retention
-
-When a guess contradicts prior feedback, the evaluator records the age of the violated clue. This allows analysis of constraint-violation rate as previously established information becomes older across turns.
-
-### Self-correction
-
-The benchmark records:
-
-- repair success rate;
-- repair success by error type;
-- failed-repair / round-forfeit rate.
-
-No arbitrary weighted composite score is used in the MVP.
-
----
-
-## Project structure
-
-The intended repository layout is:
-
-```text
-wordle-llm-benchmark/
-├── README.md
-├── DESIGN.md
-├── AGENTS.md
-├── pyproject.toml
-├── uv.lock
-├── .env.example
-│
-├── configs/
-│   ├── benchmark.yaml
-│   └── models.yaml
-│
-├── data/
-│   ├── README.md
-│   ├── raw/
-│   ├── frozen/
-│   │   ├── wordle_answers_2022.txt
-│   │   ├── wordle_extra_guesses_2022.txt
-│   │   └── dynamic_master_5letter.txt
-│   └── manifests/
-│       ├── dev_historical.jsonl
-│       ├── dev_dynamic.jsonl
-│       ├── eval_historical.jsonl
-│       └── eval_dynamic.jsonl
-│
-├── benchmark/
-│   ├── __init__.py
-│   ├── __main__.py
-│   ├── cli.py
-│   ├── types.py
-│   ├── engine/
-│   ├── prompts/
-│   ├── providers/
-│   ├── experiment/
-│   └── analysis/
-│
-├── scripts/
-│   └── build_dynamic_dictionary.py
-│
-├── tests/
-└── results/
-```
-
-See `DESIGN.md` for the detailed module responsibilities.
-
-## Running a provider development slice
-
-Install dependencies with `uv sync`, copy `.env.example` to your environment, and
-set the relevant API key. Provider calls happen only through the explicit `run`
-command:
-
-```bash
-uv run python -m benchmark run \
-  --model gpt4o \
-  --condition hist_named \
-  --mode normal \
-  --split dev \
-  --run-id dev-gpt4o \
-  --concurrency 1 \
-  --max-cost-usd 1
-```
-
-The MVP requires only the OpenAI credentials described above. For the deferred
-Part 2 Qwen extension, set `HF_TOKEN`. Qwen3 8B, 14B, and 32B use Hugging
-Face Inference Providers through its OpenAI-compatible endpoint. Each request is
-stateless, and the runner never passes a conversation or previous-response ID.
-
-Part 2 evaluation explicitly pins Nscale for all three Qwen sizes through the model
-IDs `Qwen/Qwen3-8B:nscale`, `Qwen/Qwen3-14B:nscale`, and
-`Qwen/Qwen3-32B:nscale`. Reasoning effort is `none`, strict structured output is
-required, and each proposal records the exact requested and returned model IDs.
-
-Part 2 Qwen pricing remains unset until it is checked immediately before its evaluation,
-so estimated costs are `null` and `--max-cost-usd` is unavailable for these runs.
-Use `--limit 1` for a one-game development smoke test.
-
-Results are append-only JSONL under `results/<run-id>/`. Reusing the same run ID
-skips completed model/condition/mode/game keys and rejects changed run metadata,
-including attempts to resume under another mode.
-
-Resume is at whole-game granularity: rerun the exact same command with the same
-`--run-id`. Do not create a new run ID merely to resume an interrupted run.
-Completed summaries are never rerun; an in-progress game restarts from round 1.
-With concurrency `C`, up to `C` games and their partial API cost may repeat after
-interruption. No mid-game checkpoints are stored.
-
-Check a run without making provider calls:
-
-```bash
-uv run wordle-llm-benchmark status \
-  --results results/<run-id>
-```
-
-Resume automatically removes orphan proposal rows. The same cleanup is available
-without provider calls via:
-
-```bash
-uv run wordle-llm-benchmark clean-partials \
-  --results results/<run-id>
-```
-Because usage is known only after a response, concurrent cost guarding can exceed
-the limit by at most one batch (`--concurrency` games); use concurrency 1 for the
-tightest budget control.
-
----
+The harness also supports `strict` mode as a separate constraint-enforced
+experiment. Qwen3 8B, 14B, and 32B are deferred to Part 2 and are not part of MVP
+coverage or primary conclusions.
+
+## Protocol in brief
+
+Every model call is stateless. Each turn reconstructs the complete public game state
+from the rules and played history; provider conversation state is never reused.
+
+The model returns three ranked guesses:
+
+- top-1 is the proposed action;
+- top-2 and top-3 are diagnostics only;
+- an invalid top-1 receives exactly one repair attempt;
+- top-2/top-3 are never automatically promoted.
+
+Action validity and constraint consistency are measured separately:
+
+- **Action-valid** means structurally and lexically playable.
+- **Constraint-consistent** means exact replay against every previous feedback row.
+
+In `normal` mode, every action-valid top-1 is played even if it violates an earlier
+clue. The violation is recorded and deterministic feedback is still returned.
+
+In `strict` mode, constraint inconsistency blocks play and triggers the one permitted
+repair. Failed repair forfeits the decision round without feedback.
+
+The local Python engine is authoritative for duplicate-aware feedback, legality,
+constraint replay, feasible-secret filtering, and information gain. See
+[`DESIGN.md`](DESIGN.md) for the full experimental specification.
+
+## Final normal-mode results
+
+All 1,350 primary normal-mode games are complete. Solve@6 results from the final
+report are:
+
+| Model | Historical named | Historical unnamed | Dynamic 256 |
+|---|---:|---:|---:|
+| GPT-4o | 3.3% | 6.0% | 8.7% |
+| GPT-5 | 6.7% | 6.0% | 6.0% |
+| GPT-5.6 | 58.7% | 55.3% | 66.7% |
+
+Selected behavioral metrics:
+
+| Model | Hist-named CC@1 | Hist-named IG efficiency | Dynamic Action Valid@1 |
+|---|---:|---:|---:|
+| GPT-4o | 20.9% | 0.624 | 79.8% |
+| GPT-5 | 24.8% | 0.637 | 57.9% |
+| GPT-5.6 | 49.7% | 0.765 | 83.3% |
+
+### Main findings
+
+- **GPT-5.6 is a discontinuous improvement.** Its paired Solve@6 advantage over
+  GPT-5 is 49.3–60.7 percentage points across conditions. GPT-5 does not materially
+  outperform GPT-4o.
+- **Constraint tracking is the central bottleneck.** GPT-4o and GPT-5 historical
+  consistency falls to roughly 3–7% by round 3 and approaches zero in later rounds.
+  GPT-5.6 is substantially better but remains imperfect.
+- **Naming Wordle does not reliably help.** GPT-5 and GPT-5.6 have no statistically
+  clear naming effect. GPT-4o performs 2.7 percentage points worse when named, the
+  opposite of the expected direction.
+- **Dynamic does not automatically mean harder.** GPT-5.6 performs best in the
+  dynamic condition. The unfamiliar vocabulary increases legality errors, but the
+  256-word secret space also makes search easier.
+- **GPT-5 is unusually poor at dynamic-pool compliance.** Its dynamic Action
+  Valid@1 is 57.9%, more than half of logged suggestions are outside the supplied
+  pool, and its repeated-guess rate reaches 15.6%.
+- **Strict enforcement creates feedback starvation.** Complete GPT-5 strict runs
+  forfeit more than four rounds per game. In the provisional 96-game GPT-5.6 dynamic
+  comparison, strict enforcement reduces Solve@6 by 28.1 points (95% CI 17.7–38.5).
+
+Strict evaluation is incomplete for GPT-4o and GPT-5.6, and medium-reasoning
+evaluation results were not available for the final report. Do not treat those
+comparisons as final. A detailed machine-oriented handoff is stored at
+[`results/analysis-openai-eval/TECHNICAL_RESULTS_HANDOFF.md`](results/analysis-openai-eval/TECHNICAL_RESULTS_HANDOFF.md).
 
 ## Requirements
 
-- Python 3.11 or newer
+- Python 3.11+
 - [`uv`](https://docs.astral.sh/uv/)
-- API credentials only for providers you intend to run
-- Part 2 only: Hugging Face token authorized for Qwen Inference Providers calls
+- Node.js and npm for the results portal
+- `OPENAI_API_KEY` only when making paid OpenAI calls
 
-The project uses `uv` for dependency management, virtual environments, locking, and command execution.
-
----
-
-## Setup
-
-Clone the repository and create/sync the environment:
+Install the Python environment:
 
 ```bash
-git clone <repository-url>
-cd wordle-llm-benchmark
 uv sync
 ```
 
-Run the deterministic test suite:
+Install frontend dependencies:
+
+```bash
+cd frontend
+npm install
+cd ..
+```
+
+No provider calls occur during imports, deterministic tests, manifest generation,
+analysis, or portal use.
+
+## Validate the deterministic benchmark
+
+Run the full deterministic suite:
 
 ```bash
 uv run pytest
 ```
 
-The test suite must not make paid API calls by default.
-
-If the repository provides an example environment file:
+Useful CLI discovery:
 
 ```bash
-cp .env.example .env
+uv run python -m benchmark --help
+uv run python -m benchmark run --help
+uv run python -m benchmark analyze --help
 ```
 
-Add only the credentials needed for the provider adapters you intend to use. Do not commit `.env` or API keys.
-
----
-
-## Dependency management
-
-Add runtime dependencies with:
+Generate manifests only when intentionally rebuilding them:
 
 ```bash
-uv add <package>
+uv run python -m benchmark generate-manifests \
+  --config configs/benchmark.yaml
 ```
 
-Add development/test dependencies with:
+Frozen dictionary and manifest generation refuses overwrites unless explicitly
+given `--force`.
 
-```bash
-uv add --dev <package>
-```
+## Run experiments
 
-After dependency changes, commit both:
-
-```text
-pyproject.toml
-uv.lock
-```
-
-Do not use separate Conda/Poetry/Pipenv environments for this project.
-
----
-
-## Development workflow
-
-The implementation should proceed in this order.
-
-### 1. Deterministic engine
-
-Build and test scoring, duplicate-letter semantics, candidate filtering, constraints, and information gain.
-
-```bash
-uv run pytest tests/test_feedback.py tests/test_duplicates.py
-```
-
-### 2. Frozen data pipeline
-
-Validate historical word lists, construct/freeze the dynamic dictionary, and generate development/evaluation manifests.
-
-Conceptually:
-
-```bash
-uv run python scripts/build_dynamic_dictionary.py ...
-uv run python -m benchmark generate-manifests --config configs/benchmark.yaml
-```
-
-Do not regenerate evaluation manifests during normal benchmark runs.
-
-### 3. Prompts + mock provider
-
-Implement all three prompt variants, output parsing, error classification, one-repair semantics, and end-to-end games using a deterministic mock model.
+### One development run
 
 ```bash
 uv run python -m benchmark run \
-  --config configs/benchmark.yaml \
-  --condition dynamic_256 \
-  --mode normal \
-  --run-id mock-dynamic-normal \
-  --split dev
-```
-
-### 4. Provider integration
-
-Only after deterministic and mock tests pass, connect real providers.
-
-The MVP uses:
-
-- OpenAI Responses API.
-
-Part 2 additionally uses Hugging Face Inference Providers' OpenAI-compatible
-endpoint with Nscale pinned for Qwen inference.
-
-Provider-specific model IDs, endpoints, prices, and reasoning settings belong in configuration rather than game code.
-
-### 5. Analysis
-
-Aggregate completed runs and produce the predefined metrics and confidence intervals.
-
-```bash
-uv run python -m benchmark analyze --results results/<run-id>
-```
-
----
-
-## Running experiments
-
-The final CLI may differ slightly during implementation, but it should support workflows equivalent to the following.
-
-### Run one development condition
-
-```bash
-uv run python -m benchmark run \
-  --config configs/benchmark.yaml \
   --model gpt4o \
   --condition hist_named \
   --mode normal \
-  --run-id gpt4o-hist-named-normal-dev \
-  --split dev
-```
-
-### Part 2: run dynamic Qwen development games
-
-```bash
-uv run python -m benchmark run \
-  --config configs/benchmark.yaml \
-  --model qwen3_8b \
-  --condition dynamic_256 \
-  --mode strict \
-  --run-id qwen3-8b-dynamic-strict-dev \
-  --split dev
-```
-
-### Apply a cost guard
-
-```bash
-uv run python -m benchmark run \
-  --config configs/benchmark.yaml \
-  --model gpt4o \
-  --condition hist_named \
-  --mode normal \
-  --run-id gpt4o-hist-named-normal-budgeted \
   --split dev \
-  --max-cost-usd 2
+  --run-id gpt4o-hist-named-normal-dev \
+  --concurrency 1 \
+  --max-cost-usd 1
 ```
 
-### Analyze a completed run
+Each result directory contains frozen run metadata plus append-only proposal and
+summary JSONL files. Reusing the exact command and `--run-id` resumes at whole-game
+granularity:
+
+- completed games are skipped;
+- interrupted in-progress games restart from round 1;
+- summaries are the durable completion markers;
+- orphan proposals are excluded from analysis and cleaned on resume.
+
+Check a run without making provider calls:
 
 ```bash
-uv run python -m benchmark analyze --results results/<run-id>
+uv run python -m benchmark status \
+  --results results/gpt4o-hist-named-normal-dev
 ```
 
-To analyze all currently completed games from the active OpenAI evaluation runs:
+Use `--force-resume` only when knowingly accepting metadata drift. It preserves the
+checkpoint but does not make incompatible experimental configurations comparable.
+
+### Complete OpenAI suites
+
+The suite launcher expands a selection into separate sequential, resumable runs:
+
+```bash
+# Inspect commands only.
+uv run python scripts/run_suite.py inference-eval --dry-run
+
+# Run the primary OpenAI inference suite.
+uv run python scripts/run_suite.py inference-eval \
+  --concurrency 4 \
+  --max-cost-usd-per-run 10
+```
+
+Supported suite names:
+
+- `inference-dev`
+- `inference-eval`
+- `reasoning-dev`
+- `reasoning-eval`
+
+Reasoning suites include only GPT-5 and GPT-5.6 with medium reasoning. Development
+and evaluation results must be analyzed separately.
+
+## Analyze results
+
+Generate the canonical OpenAI evaluation snapshot:
 
 ```bash
 uv run python -m benchmark analyze \
   --results results \
-  --output results/analysis-openai-eval
+  --output results/analysis-openai-eval \
+  --provider openai \
+  --split eval
 ```
 
-`openai` and `eval` are the command defaults. Override them with `--provider` or
-`--split dev` when intentionally analyzing another slice. Repeat `--model-prefix`
-to narrow model keys. Discovery uses each directory's `metadata.json`, so test,
-legacy, and Qwen directories are not inferred from loose filename matches.
+Analyze medium-reasoning development runs separately:
 
-Analysis is safe while runs are active: it reads only games with durable summary
-records and ignores orphan proposals. Aggregate tables and confidence intervals use
-all currently completed games. Paired comparisons use the completed game-ID
-intersection and expose `pair_complete`, pair counts, and per-side game counts; do
-not treat a partial comparison as final.
+```bash
+uv run python -m benchmark analyze \
+  --results results \
+  --output results/analysis-openai-reasoning-dev \
+  --provider openai \
+  --split dev \
+  --model-prefix gpt5_medium \
+  --model-prefix gpt56_medium
+```
 
-Outputs include CSV and Parquet tables for aggregate metrics, run completion,
-historical named/unnamed effects, OpenAI model contrasts, dynamic/OOD contrasts,
-reasoning effects, enforcement penalties, constraint age, and consistency by round.
-The canonical Parquet snapshot also contains completed games and flattened proposals
-for the local research portal. CSV files remain convenience exports.
+The deterministic analysis pipeline:
 
-### Launch the Observable research-results portal
+- reads only games with durable completed summaries;
+- ignores orphan proposals;
+- rejects duplicate completed summaries;
+- computes aggregate behavioral metrics;
+- performs 10,000 game-level bootstrap resamples by default;
+- pairs comparisons by exact game ID when appropriate;
+- records incomplete coverage and pair counts explicitly;
+- emits Parquet as the canonical processed representation and CSV mirrors for
+  convenience.
 
-Python owns scientific analysis and emits the frontend-neutral Parquet contract.
-Observable Framework owns presentation and queries those Parquet files with
-browser-side DuckDB. Generate the processed analysis first, then launch the portal:
+Core processed outputs include:
+
+```text
+metrics.parquet
+run_coverage.parquet
+games.parquet
+proposals.parquet
+analysis_metadata.json
+
+contrasts/
+  paired.parquet
+  model.parquet
+  dynamic.parquet
+  reasoning.parquet
+  enforcement_penalty.parquet
+  penalty_reduction.parquet
+
+diagnostics/
+  constraint_age.parquet
+  consistency_by_round.parquet
+```
+
+## Results portal
+
+Python owns scientific analysis. Parquet is the frontend-neutral contract.
+Observable Framework owns only presentation, filtering, and client-side DuckDB-Wasm
+queries.
+
+Launch the default evaluation snapshot:
 
 ```bash
 cd frontend
-npm install
 npm run dev
 ```
 
-The preflight synchronization validates and copies the default snapshot from
-`results/analysis-openai-eval`. To use another processed snapshot:
+Use another processed snapshot:
 
 ```bash
 cd frontend
-WORDLE_ANALYSIS_DIR=/absolute/path/to/analysis npm run dev
+WORDLE_ANALYSIS_DIR=../results/analysis-openai-reasoning-dev npm run dev
 ```
 
-The portal is organized around three routes backed by the same deterministic data:
+The portal has three routes:
 
-- **Research Report** — curated narrative, headline charts, findings, caveats,
-  coverage, and provenance.
-- **Experiment Lab** — coordinated filters, metric explanations, paired contrasts,
-  constraint diagnostics, and compute/performance analysis.
-- **Game Inspector** — searchable games, a Wordle board, candidate-space trajectory,
-  top-three proposal diagnostics, IG/oracle comparisons, repairs, tokens, latency,
-  and cost.
+- **Research Report** — editorial summary, primary contrasts, findings, caveats,
+  compute analysis, and provenance.
+- **Experiment Lab** — coordinated filters, metric explanations, model/condition
+  comparisons, contrast forest plots, constraint diagnostics, and coverage status.
+- **Game Inspector** — searchable completed games, Wordle feedback board,
+  candidate-space trajectory, ranked top-three diagnostics, oracle information gain,
+  repairs, tokens, latency, and cost.
 
-The site reads Parquet through DuckDB-Wasm. It never reads raw
-benchmark JSONL, launches benchmarks, modifies results, or calls a model provider.
-Build a self-contained static site with:
+Build a self-contained static site:
 
 ```bash
 cd frontend
 npm run build
 ```
 
-Observable Framework is the supported results frontend. The former Streamlit
-dashboard has been retired; Python remains responsible for all deterministic
-statistics and snapshot validation.
+The portal is read-only. It does not parse raw benchmark JSONL, make provider calls,
+modify results, or recompute statistical estimates.
 
-Do not start the 150-game evaluation split until development runs, prompt checks, manifest hashes, and deterministic tests are frozen and passing.
-
-### OpenAI medium-reasoning secondary suite
-
-The primary entries in `configs/models.yaml` remain frozen. The secondary suite is
-declared in `configs/reasoning_suite.yaml`, and its two treatment entries live in
-`configs/reasoning_models.yaml`. It contains GPT-5 and GPT-5.6 only, with medium
-reasoning, all three conditions, both modes, and 150 frozen evaluation games per run
-(12 runs; 1,800 treatment games).
-
-Run one development smoke cell at a time before evaluation:
-
-```bash
-uv run python -m benchmark run \
-  --models-config configs/reasoning_models.yaml \
-  --model gpt5_medium \
-  --condition hist_named \
-  --mode normal \
-  --split dev \
-  --limit 1 \
-  --run-id gpt5-hist-named-normal-medium-dev
-```
-
-Repeat development validation for GPT-5/GPT-5.6, all three conditions, and both
-modes. Use each cell's recorded mean cost per game to project its own 150-game cost;
-do not extrapolate dynamic or strict runs from a historical normal smoke test.
-
-After all smoke tests, cost projections, and deterministic tests pass, an evaluation
-cell uses the same command with `--split eval`, no `--limit`, an explicit cost guard,
-and initially `--concurrency 4`:
-
-```bash
-uv run python -m benchmark run \
-  --models-config configs/reasoning_models.yaml \
-  --model gpt5_medium \
-  --condition hist_named \
-  --mode normal \
-  --split eval \
-  --concurrency 4 \
-  --max-cost-usd <approved-run-budget> \
-  --run-id gpt5-hist-named-normal-medium-eval
-```
-
-Use a distinct run ID for each matrix cell. Resume an interruption only by rerunning
-the identical command with the same run ID.
-
-### Launch a complete OpenAI suite
-
-The suite launcher expands one selection into sequential resumable runs. Inference
-includes GPT-4o, GPT-5, and GPT-5.6; reasoning includes GPT-5 and GPT-5.6 medium.
-Qwen is intentionally excluded. Each run covers all three conditions and both modes.
-
-```bash
-# Inspect commands without making provider calls.
-uv run python scripts/run_suite.py inference-eval --dry-run
-
-# All ten frozen development games in every inference cell (18 runs).
-uv run python scripts/run_suite.py inference-dev --concurrency 4
-
-# One-game infrastructure smoke test in every reasoning cell (12 runs).
-uv run python scripts/run_suite.py reasoning-dev --dev-limit 1 --concurrency 4
-
-# All 150 evaluation games in every reasoning cell (12 runs).
-uv run python scripts/run_suite.py reasoning-eval \
-  --concurrency 4 \
-  --max-cost-usd-per-run <approved-run-budget>
-```
-
-The four suite names are `inference-dev`, `inference-eval`, `reasoning-dev`, and
-`reasoning-eval`. Runs execute one after another; concurrency applies to games inside
-the current run. `Ctrl+C` preserves completed games. Rerun the identical suite command
-to resume: already completed run IDs make no provider calls, and the launcher proceeds
-to the remaining cells. The cost guard is per run, not a suite-wide budget.
-
-If repository changes added metadata fields without changing the scientific treatment,
-an older run may fail its exact metadata check. Inspect the reported difference first,
-then explicitly override it with:
-
-```bash
-uv run python scripts/run_suite.py inference-eval \
-  --concurrency 4 \
-  --force-resume
-```
-
-For a single run, add `--force-resume` to `python -m benchmark run`. The override:
-
-- prints every changed metadata field;
-- saves the original as `metadata.before-force-<timestamp>.json`;
-- installs the current metadata as the run identity;
-- skips games already marked complete in `summaries.jsonl`;
-- restarts incomplete games from round one.
-
-This flag can mix incompatible experimental records if used after changing the model,
-condition, mode, manifest, prompt, or benchmark version. It is intended for reviewed,
-non-semantic metadata migrations such as newly recorded bookkeeping fields. Without
-`--force-resume`, any metadata mismatch continues to fail loudly.
-
-Reasoning suite run IDs use the compact model names `gpt5medium` and `gpt56medium`,
-for example `gpt5medium-hist_named-normal-mvp-v4-eval-001`.
-
----
-
-## Model configuration
-
-Exact model identifiers should not be hard-coded into benchmark logic.
-
-A configuration file such as `configs/models.yaml` should define each experiment model's:
-
-- logical benchmark name;
-- provider adapter;
-- provider model ID;
-- endpoint/base URL where applicable;
-- reasoning/thinking mode;
-- generation settings;
-- maximum output tokens;
-- input/output pricing used for cost accounting.
-
-This keeps the experiment protocol stable even when provider deployment details change.
-
-For the primary benchmark, use direct/non-thinking or the lowest practical reasoning mode consistently enough to avoid intentionally assigning radically different inference-time reasoning budgets across model families. Record the actual settings with every run.
-
----
-
-## Part 2: Qwen execution
-
-Qwen is not part of the Part 1 MVP. In Part 2, Qwen models run through the dedicated stateless Hugging Face/Nscale adapter.
-Direct use of the generic compatible adapter and automatic provider-selection
-policies are outside the frozen benchmark protocol. Exact `:nscale` model IDs live
-in `configs/models.yaml`.
-
-The planned Part 2 scaling comparison is Qwen3 8B → 14B → 32B, with all three served by Nscale through Hugging Face Inference Providers.
-
----
-
-## Reproducibility
-
-Every run should record enough metadata to reconstruct how it was produced, including:
+## Repository layout
 
 ```text
-run ID
-git commit
-benchmark version
-prompt version
-manifest hashes
-word-list hashes
-models config hash
-benchmark config hash
-Python version
-uv.lock hash
-game mode
-provider/model identifiers
-pricing configuration
-host/platform metadata
+benchmark/             deterministic engine, providers, runner, analysis
+configs/               benchmark and model configurations
+data/                  provenance, frozen vocabularies, manifests
+analysis/interpretation/ human-authored metric definitions/findings/caveats
+frontend/              Observable Framework portal
+scripts/               data/provider probes and suite launcher
+tests/                 deterministic Python tests
+results/               raw run directories and processed analysis snapshots
+DESIGN.md              canonical experimental specification
+AGENTS.md              coding-agent rules and invariants
 ```
 
-For Hugging Face/Nscale Qwen runs, also record the gateway, exact `:nscale` requested model identifier, returned model identifier when exposed, Nscale pin, base URL, pricing configuration, structured-output setting, and reasoning mode.
+## Reproducibility and safety
 
-Raw results should be treated as immutable experiment artifacts. Analysis should read raw logs and write derived tables/figures separately rather than mutating the original records.
+Runs record the benchmark and prompt versions, exact model and provider settings,
+manifest/config hashes, selected game IDs, reasoning settings, temperature, token
+caps, timeout, Git commit, token usage, latency, and estimated cost where available.
 
-Run deterministic aggregation for one run directory with:
+Use development manifests for debugging. Do not tune prompts or protocol behavior
+after inspecting evaluation results. Never commit provider credentials. Paid calls
+must remain explicit and should use `--max-cost-usd` where pricing is configured.
 
-```bash
-uv run python -m benchmark analyze \
-  --results results/<run-id> \
-  --output results/<run-id>/analysis
-```
+## Part 2: Qwen extension
 
-The command writes canonical Parquet tables plus CSV compatibility exports.
-Confidence intervals use 10,000 deterministic bootstrap
-resamples by default; use `--seed` or `--bootstrap-resamples` explicitly when a
-different recorded analysis configuration is required.
+Qwen is not part of the Part 1 MVP. Existing Hugging Face/Nscale adapter and model
+configuration code is retained for a later Part 2 comparison of Qwen3 8B, 14B, and
+32B. Part 2 must explicitly pin Nscale through the `:nscale` model suffix, use
+stateless requests and strict structured output, and establish its own complete
+coverage before Qwen results enter any comparative claims.
 
-Launch the Observable research-results portal described above for interactive analysis.
+## References
 
----
+- Abdulhai et al., [“LMRL Gym: Benchmarks for Multi-Turn Reinforcement Learning
+  with Language Models”](https://proceedings.mlr.press/v267/abdulhai25a.html),
+  ICML 2025.
+- Liu, [“Wordle Arena for LLMs”](https://drchangliu.github.io/WordleArena/), 2026.
+- Atkinson, [SCOWL](https://wordlist.aspell.net/).
+- Speer, [`wordfreq`](https://github.com/rspeer/wordfreq).
 
-## Development vs. evaluation data
+## License and attribution
 
-The repository contains separate development and evaluation manifests.
-
-Development data is for:
-
-- API debugging;
-- prompt verification;
-- parser development;
-- cost estimation;
-- concurrency tuning;
-- local end-to-end testing.
-
-The final evaluation data is not for iterative prompt optimization.
-
-Once evaluation prompts/manifests are frozen, changes that affect experimental semantics require a version bump and rerunning all affected model comparisons.
-
----
-
-## Testing requirements
-
-Research-critical behavior must be tested locally.
-
-At minimum, tests should cover:
-
-- exact/present/absent scoring;
-- repeated-letter edge cases;
-- candidate consistency against full history;
-- historical vs. dynamic legal-guess rules;
-- information gain on tiny enumerable candidate sets;
-- prompt contamination checks;
-- session isolation;
-- repair and failed-repair behavior;
-- manifest sizes and uniqueness;
-- manifest reproducibility;
-- complete mock-provider games.
-
-Run everything with:
-
-```bash
-uv run pytest
-```
-
-Real provider tests should be explicitly opt-in and should never run during an ordinary `pytest` invocation.
-
----
-
-## Result outputs
-
-The benchmark should retain two levels of records.
-
-### Proposal-level data
-
-One record for every initial or repair model response, including:
-
-- top-three guesses;
-- action status and constraint consistency for each;
-- round/state metadata;
-- candidate count;
-- information-gain metrics;
-- token usage;
-- latency;
-- cost;
-- model/prompt/config identifiers.
-
-### Game-level summaries
-
-One row per model × condition × game containing at least:
-
-- solved/not solved;
-- solve round;
-- decision-round score;
-- game mode and played-guess count;
-- repair count;
-- repair successes;
-- forfeits.
-
-Prefer Parquet for analysis-friendly outputs and JSONL where an inspectable append-only representation is useful.
-
----
-
-## Analysis strategy
-
-### RQ1 — model capability
-
-For the MVP, compare GPT-4o, GPT-5, and GPT-5.6 on task success, constraint fidelity, information efficiency, ranking/search regret, constraint-age errors, and repair behavior.
-
-Treat GPT-4o → GPT-5 → GPT-5.6 as a model-generation comparison rather than a parameter-count curve. Qwen parameter scaling is a separate Part 2 analysis.
-
-### RQ2 — Wordle recognition
-
-Use the paired contrast:
-
-```text
-hist_named - hist_unnamed
-```
-
-Because the two conditions share the same 150 secrets, calculate seed-paired effects and confidence intervals.
-
-### RQ3 — dynamic generalization
-
-Compare:
-
-```text
-hist_unnamed vs. dynamic_256
-```
-
-rather than `hist_named` vs. `dynamic_256`, so task-name recognition is not deliberately mixed into this comparison.
-
-This is a generalization/validation comparison rather than a perfectly isolated one-variable ablation, because the dynamic condition deliberately changes the candidate universe and its presentation.
-
----
-
-## Optional post-MVP extension
-
-Fine-tuning is outside the MVP and is not specified for the frozen three-model benchmark.
-
-Evaluate the fine-tuned model on:
-
-1. unseen dynamic pools; and
-2. unseen dynamic pools with arbitrary replacements for the `EXACT`, `PRESENT`, and `ABSENT` labels.
-
-This extension asks whether fine-tuning learns transferable constraint reasoning rather than merely memorizing Wordle-specific vocabulary or surface labels.
-
-Any future fine-tuning study must not alter the primary three-model RQ1–RQ3 benchmark.
-
----
-
-## For Codex
-
-Start by reading:
-
-```text
-DESIGN.md
-AGENTS.md
-README.md
-```
-
-Then inspect the repository and implement **Milestones 1–3 before provider integration**.
-
-Do not spend API money until:
-
-- deterministic engine tests pass;
-- frozen manifests work;
-- prompt contamination tests pass;
-- mock-provider full games pass;
-- repair/forfeit semantics are verified.
-
-Provider SDK changes may require updating adapter/configuration code. They do **not** justify changing the frozen experimental protocol.
+This repository contains an individual research project by Daniel Yu. See the final
+report for the complete methodology, interpretation, limitations, references, and
+AI-use acknowledgment.
