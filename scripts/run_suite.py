@@ -24,16 +24,15 @@ SUITES = {
 
 def commands(
     suite_name: str, *, results: Path, concurrency: int, dev_limit: int | None = None,
-    max_cost_usd_per_run: float | None = None,
+    max_cost_usd_per_run: float | None = None, force_resume: bool = False,
 ) -> list[list[str]]:
     models, split, models_config = SUITES[suite_name]
     if split == "eval" and dev_limit is not None:
         raise ValueError("--dev-limit cannot be used for an evaluation suite")
     result = []
     for model, condition, mode in product(models, CONDITIONS, MODES):
-        treatment = "-medium" if model.endswith("_medium") else ""
-        display_model = model.removesuffix("_medium")
-        run_id = f"{display_model}-{condition}-{mode}{treatment}-{BENCHMARK_VERSION}-{split}-001"
+        run_model = model.replace("_", "") if model.endswith("_medium") else model
+        run_id = f"{run_model}-{condition}-{mode}-{BENCHMARK_VERSION}-{split}-001"
         command = [
             sys.executable, "-m", "benchmark", "run",
             "--models-config", str(models_config), "--model", model,
@@ -45,6 +44,8 @@ def commands(
             command += ["--limit", str(dev_limit)]
         if max_cost_usd_per_run is not None:
             command += ["--max-cost-usd", str(max_cost_usd_per_run)]
+        if force_resume:
+            command.append("--force-resume")
         result.append(command)
     return result
 
@@ -57,6 +58,7 @@ def main() -> None:
     parser.add_argument("--dev-limit", type=int)
     parser.add_argument("--max-cost-usd-per-run", type=float)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--force-resume", action="store_true")
     args = parser.parse_args()
     if args.concurrency < 1 or (args.dev_limit is not None and args.dev_limit < 1):
         parser.error("concurrency and dev limit must be positive")
@@ -65,6 +67,7 @@ def main() -> None:
         suite_commands = commands(
             args.suite, results=args.results, concurrency=args.concurrency,
             dev_limit=args.dev_limit, max_cost_usd_per_run=args.max_cost_usd_per_run,
+            force_resume=args.force_resume,
         )
     except ValueError as exc:
         parser.error(str(exc))
