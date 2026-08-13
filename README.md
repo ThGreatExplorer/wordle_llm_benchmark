@@ -559,6 +559,34 @@ uv run python -m benchmark run \
 Use a distinct run ID for each matrix cell. Resume an interruption only by rerunning
 the identical command with the same run ID.
 
+### Launch a complete OpenAI suite
+
+The suite launcher expands one selection into sequential resumable runs. Inference
+includes GPT-4o, GPT-5, and GPT-5.6; reasoning includes GPT-5 and GPT-5.6 medium.
+Qwen is intentionally excluded. Each run covers all three conditions and both modes.
+
+```bash
+# Inspect commands without making provider calls.
+uv run python scripts/run_suite.py inference-eval --dry-run
+
+# All ten frozen development games in every inference cell (18 runs).
+uv run python scripts/run_suite.py inference-dev --concurrency 4
+
+# One-game infrastructure smoke test in every reasoning cell (12 runs).
+uv run python scripts/run_suite.py reasoning-dev --dev-limit 1 --concurrency 4
+
+# All 150 evaluation games in every reasoning cell (12 runs).
+uv run python scripts/run_suite.py reasoning-eval \
+  --concurrency 4 \
+  --max-cost-usd-per-run <approved-run-budget>
+```
+
+The four suite names are `inference-dev`, `inference-eval`, `reasoning-dev`, and
+`reasoning-eval`. Runs execute one after another; concurrency applies to games inside
+the current run. `Ctrl+C` preserves completed games. Rerun the identical suite command
+to resume: already completed run IDs make no provider calls, and the launcher proceeds
+to the remaining cells. The cost guard is per run, not a suite-wide budget.
+
 ---
 
 ## Model configuration
