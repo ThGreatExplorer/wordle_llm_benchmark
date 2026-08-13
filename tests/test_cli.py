@@ -4,7 +4,7 @@ import json
 import sys
 from pathlib import Path
 
-from benchmark.cli import _freeze_metadata, _positive_int, _required_env, main
+from benchmark.cli import _freeze_metadata, _positive_int, _required_env, _resume_metadata, main
 
 
 def test_run_metadata_cannot_change_on_resume(tmp_path) -> None:
@@ -13,6 +13,17 @@ def test_run_metadata_cannot_change_on_resume(tmp_path) -> None:
     _freeze_metadata(path, {"run_id": "one"})
     with pytest.raises(ValueError, match="differs"):
         _freeze_metadata(path, {"run_id": "two"})
+
+
+def test_force_resume_backs_up_and_replaces_metadata(tmp_path, capsys) -> None:
+    path = tmp_path / "metadata.json"
+    original = {"run_id": "one", "started_at_utc": "original", "concurrency": 1}
+    _freeze_metadata(path, original)
+    _resume_metadata(path, original | {"concurrency": 4}, force=True)
+    assert json.loads(path.read_text())["concurrency"] == 4
+    backups = list(tmp_path.glob("metadata.before-force-*.json"))
+    assert len(backups) == 1 and json.loads(backups[0].read_text()) == original
+    assert "Changed fields: concurrency" in capsys.readouterr().out
 
 
 def test_model_config_has_exact_frozen_tracks() -> None:

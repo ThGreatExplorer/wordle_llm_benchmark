@@ -587,6 +587,32 @@ the current run. `Ctrl+C` preserves completed games. Rerun the identical suite c
 to resume: already completed run IDs make no provider calls, and the launcher proceeds
 to the remaining cells. The cost guard is per run, not a suite-wide budget.
 
+If repository changes added metadata fields without changing the scientific treatment,
+an older run may fail its exact metadata check. Inspect the reported difference first,
+then explicitly override it with:
+
+```bash
+uv run python scripts/run_suite.py inference-eval \
+  --concurrency 4 \
+  --force-resume
+```
+
+For a single run, add `--force-resume` to `python -m benchmark run`. The override:
+
+- prints every changed metadata field;
+- saves the original as `metadata.before-force-<timestamp>.json`;
+- installs the current metadata as the run identity;
+- skips games already marked complete in `summaries.jsonl`;
+- restarts incomplete games from round one.
+
+This flag can mix incompatible experimental records if used after changing the model,
+condition, mode, manifest, prompt, or benchmark version. It is intended for reviewed,
+non-semantic metadata migrations such as newly recorded bookkeeping fields. Without
+`--force-resume`, any metadata mismatch continues to fail loudly.
+
+Reasoning suite run IDs use the compact model names `gpt5medium` and `gpt56medium`,
+for example `gpt5medium-hist_named-normal-mvp-v4-eval-001`.
+
 ---
 
 ## Model configuration

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -34,9 +35,24 @@ def _freeze_metadata(path: Path, metadata: dict) -> None:
     path.write_text(serialized)
 
 
-def _resume_metadata(path: Path, metadata: dict) -> None:
+def _resume_metadata(path: Path, metadata: dict, *, force: bool = False) -> None:
     if path.exists():
-        metadata["started_at_utc"] = json.loads(path.read_text())["started_at_utc"]
+        existing = json.loads(path.read_text())
+        metadata["started_at_utc"] = existing["started_at_utc"]
+        serialized = json.dumps(metadata, indent=2, sort_keys=True) + "\n"
+        if path.read_text() != serialized and force:
+            changed = sorted(key for key in existing.keys() | metadata.keys()
+                             if existing.get(key) != metadata.get(key))
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            backup = path.with_name(f"metadata.before-force-{stamp}.json")
+            shutil.copy2(path, backup)
+            print(
+                "WARNING: forcing resume with changed run metadata.\n"
+                f"Changed fields: {', '.join(changed)}\n"
+                f"Original metadata backed up to: {backup}"
+            )
+            path.write_text(serialized)
+            return
     _freeze_metadata(path, metadata)
 
 
@@ -186,6 +202,7 @@ def main() -> None:
     run.add_argument("--concurrency", type=int, default=1)
     run.add_argument("--max-cost-usd", type=float)
     run.add_argument("--limit", type=_positive_int)
+    run.add_argument("--force-resume", action="store_true")
     mock = subparsers.add_parser("run-mock")
     mock.add_argument("--config", type=Path, default=Path("configs/benchmark.yaml"))
     mock.add_argument("--condition", type=Condition, choices=list(Condition), default=Condition.DYNAMIC_256)
@@ -229,7 +246,7 @@ def main() -> None:
                              args.split, [game_id for game_id, _ in games], args.concurrency)
         metadata["game_limit"] = args.limit
         metadata_path = output / "metadata.json"
-        _resume_metadata(metadata_path, metadata)
+        _resume_metadata(metadata_path, metadata, force=args.force_resume)
         removed, incomplete = clean_partial_proposals(
             output / "proposals.jsonl", output / "summaries.jsonl"
         )
